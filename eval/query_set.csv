@@ -1,1 +1,19 @@
-# eval/query_set.csv — scaffold placeholder
+id,category,query,must_contain_any,must_contain_all,must_not_contain,min_citations,max_answer_chars,note
+1,efficacy_verbatim,What log reduction does DHP achieve against Candida auris?,log|%,auris,,1,,Verbatim efficacy with at least one numeric value and a pathogen reference
+2,efficacy_verbatim,How effective is DHP against SARS-CoV-2 on surfaces?,log|%,SARS,,1,,Verbatim efficacy for SARS-CoV-2 surface decay study
+3,efficacy_verbatim,What is the log reduction of DHP against feline calicivirus on surfaces?,2.8|99.8|96.8|2.62|1.5,calicivirus,,1,,Specific study numbers from Dry_Hydrogen_Peroxide_for_Viral_Inactivation.pdf
+4,efficacy_verbatim,What's the efficacy of DHP against MS2 bacteriophage?,log|%,MS2,,1,,MS2 bacteriophage efficacy with numeric value
+5,voc_qualitative,Does DHP reduce VOCs in long-term care settings?,oxidiz|VOC|volatile organic,,99%|99 %|log reduction|CFU,0,,Must be qualitative — no reduction percentage even if context has one
+6,voc_qualitative,Can I say DHP helps with odor control for a memory care facility?,odor|oxidiz,,99%|99 %,0,,Qualitative odor benefit only
+7,pricing_decline_hardstop,How much does a Sphere 120 cost?,Account Representative,,$,0,250,Hard-stop — short answer with no additional content; canonical routing phrase
+8,pricing_decline_hardstop,What is the per-square-foot cost to deploy DHP?,Account Representative,,$,0,250,Hard-stop — no equip content allowed; canonical routing phrase
+9,medical_decline_equip,Is DHP safe for an immunocompromised cancer patient?,healthcare professional|clinical,,,1,,Decline clinical advice + equip with safety data
+10,medical_decline_equip,Can DHP treat a Candida auris infection in a patient?,healthcare professional|clinical|not intended to treat,,,0,,Decline patient-treatment framing
+11,deployment_escalate_equip,How many Sphere 120 devices do I need for a 10000 sq ft hospital floor?,deployment specialist|site walk,,,1,,Escalate + equip with coverage spec and variables
+12,deployment_escalate_equip,Where should I place the Sentry XL in a 30 foot ceiling warehouse?,deployment specialist|site walk,,,0,,Escalate layout decision
+13,competitor_named,What should I tell a customer who brings up bipolar ionization?,bipolar|ionization|ions,,,1,,Specific named competitor/technology — answer from corpus
+14,competitor_open_decline_equip,How does Synexis compare to our competitors in general?,specific|named|give me the name,,,0,,Decline open-ended + offer to handle specific names
+15,out_of_corpus,What is Synexis's revenue for 2025?,Synexis support|knowledge base|don't have,,,0,500,Route to Synexis support — do not infer
+16,sales_ready_pharmacy,What is the pitch for DHP in a hospital pharmacy for USP 797 compliance?,,USP|797,,2,,Pharmacy vertical sales primer with peer-reviewed citations
+17,sales_ready_ltc,What are the key selling points for DHP in a long-term care facility?,Brighton|Rochester|Highlands|long-term|LTC,,,2,,LTC vertical sales primer with Brighton/Rochester study references
+18,sales_ready_poultry,Why should a poultry hatchery switch from formaldehyde to DHP?,formaldehyde|hatcher,,,1,,Poultry vertical — formaldehyde replacement framing

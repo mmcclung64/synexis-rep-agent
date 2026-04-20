@@ -1,10 +1,8 @@
-// Synexis Rep Agent — side panel controller.
-// Talks to the Synexis Rep Agent HTTP API. Multi-turn: the session (sessionId +
-// turns array) is persisted in chrome.storage.local so history survives the
-// sidebar closing and reopening. Only the last MAX_HISTORY_TURNS turns are sent
-// on each /query request; the server applies its own safety truncation on top.
+// Synexis Rep Agent — browser UI (served at /ui).
+// Mirrors extension/sidebar.js but uses localStorage instead of chrome.storage
+// and defaults the API URL to the same origin the page was served from.
+// Multi-turn: session persists across page reloads.
 
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
 const SETTINGS_KEY = "sra.settings";
 const SESSION_KEY = "sra.session";
 const MAX_HISTORY_TURNS = 8;
@@ -13,16 +11,17 @@ const $ = (id) => document.getElementById(id);
 
 // ---------- settings ----------
 
-async function loadSettings() {
-  const { [SETTINGS_KEY]: s = {} } = await chrome.storage.local.get(SETTINGS_KEY);
+function loadSettings() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { s = {}; }
   return {
-    apiUrl: (s.apiUrl || DEFAULT_API_URL).replace(/\/$/, ""),
+    apiUrl: (s.apiUrl || window.location.origin).replace(/\/$/, ""),
     apiKey: s.apiKey || "",
   };
 }
 
-async function saveSettings(s) {
-  await chrome.storage.local.set({ [SETTINGS_KEY]: s });
+function saveSettingsSync(s) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
 }
 
 // ---------- session (multi-turn) ----------
@@ -34,27 +33,26 @@ function newSessionId() {
   return "sra-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-async function loadSession() {
-  const { [SESSION_KEY]: s } = await chrome.storage.local.get(SESSION_KEY);
+function loadSession() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { s = null; }
   if (s && s.sessionId && Array.isArray(s.turns)) return s;
   const fresh = { sessionId: newSessionId(), turns: [] };
-  await chrome.storage.local.set({ [SESSION_KEY]: fresh });
+  localStorage.setItem(SESSION_KEY, JSON.stringify(fresh));
   return fresh;
 }
 
-async function saveSession(session) {
-  await chrome.storage.local.set({ [SESSION_KEY]: session });
+function saveSession(session) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
-async function resetSession() {
+function resetSession() {
   const fresh = { sessionId: newSessionId(), turns: [] };
-  await chrome.storage.local.set({ [SESSION_KEY]: fresh });
+  localStorage.setItem(SESSION_KEY, JSON.stringify(fresh));
   return fresh;
 }
 
 function historyForSend(session) {
-  // Map to the minimal {role, content} shape the API expects, and send only
-  // the last MAX_HISTORY_TURNS turns. The server truncates again as a safety.
   const trimmed = session.turns.slice(-MAX_HISTORY_TURNS);
   return trimmed.map((t) => ({ role: t.role, content: t.content }));
 }
@@ -124,6 +122,9 @@ function renderBadge(n, citation, turnKey) {
 }
 
 function inlineTransforms(html, citeMap, turnKey) {
+  // Bold first so its markers are fully consumed before the single-asterisk
+  // italic pattern runs; otherwise "**text**" would match the italic rule and
+  // render as "*<em>text</em>*".
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
   html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
@@ -142,7 +143,6 @@ function isTableSeparatorRow(line) {
 }
 
 function parseTableRow(line) {
-  // "| a | b | c |" → ["a", "b", "c"]. Also tolerates the no-leading/trailing-pipe form.
   return line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
 }
 
@@ -152,7 +152,6 @@ function renderTableBlock(headerLine, bodyLines, citeMap, turnKey) {
   const trs = bodyLines
     .map(parseTableRow)
     .map((cells) => {
-      // Pad/trim so every row has the same column count as the header.
       while (cells.length < headers.length) cells.push("");
       cells.length = headers.length;
       return `<tr>${cells.map((c) => `<td>${inlineTransforms(c, citeMap, turnKey)}</td>`).join("")}</tr>`;
@@ -165,19 +164,15 @@ function renderAnswer(answer, citations, turnKey) {
   const citeMap = new Map();
   for (const c of citations || []) citeMap.set(c.n, c);
 
-  // Escape once up front. Markdown-table pipes survive escaping intact, so
-  // detection below operates on the escaped string.
   const lines = escapeHtml(answer).split("\n");
   const out = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
     const next = lines[i + 1];
-    // GitHub-flavored markdown table: a pipe-bearing line followed by a
-    // separator row ("|---|---|" or with colons for alignment).
     if (/\|/.test(line) && next !== undefined && isTableSeparatorRow(next)) {
       const header = line;
-      i += 2; // skip header + separator
+      i += 2;
       const body = [];
       while (i < lines.length && /\|/.test(lines[i]) && !isTableSeparatorRow(lines[i])) {
         body.push(lines[i]);
@@ -206,7 +201,10 @@ function renderCitations(citations, turnKey) {
   return `<div class="citations"><div class="head">Sources</div>${items}</div>`;
 }
 
-// Show and position tooltip using fixed coordinates to escape scroll container clipping.
+// Show and position tooltip using fixed coordinates to escape scroll container
+// clipping. Logic: render invisible to measure, decide above/below based on
+// available space, clamp horizontally, shift the arrow to keep it pointing at
+// the badge even after clamping. mouseout/focusin/focusout own visibility.
 document.addEventListener("mouseover", (ev) => {
   const badge = ev.target && ev.target.closest && ev.target.closest(".cite-badge");
   if (!badge) return;
@@ -239,7 +237,7 @@ document.addEventListener("mouseover", (ev) => {
   let left = br.left + br.width / 2 - tr.width / 2;
   left = Math.max(margin, Math.min(left, vw - tr.width - margin));
 
-  // Shift the arrow to keep it pointing at the badge even after horizontal clamping.
+  // Shift the arrow to keep it pointing at the badge even after clamping.
   const idealLeft = br.left + br.width / 2 - tr.width / 2;
   const shift = left - idealLeft;
   tooltip.style.setProperty("--arrow-offset", `${-shift}px`);
@@ -261,7 +259,7 @@ document.addEventListener("mouseout", (ev) => {
   tooltip.style.display = "none";
 });
 
-// Handle keyboard focus/blur for keyboard navigation support.
+// Keyboard focus/blur mirror the hover behavior for keyboard navigation.
 document.addEventListener("focusin", (ev) => {
   const badge = ev.target && ev.target.closest && ev.target.closest(".cite-badge");
   if (!badge) return;
@@ -306,9 +304,7 @@ function formatMeta(serverMs, wallMs, nCitations, ctxUtil) {
     ? `server ${serverMs} ms  ·  wall ${wallMs} ms`
     : `${wallMs} ms`;
   const citeLine = `${nCitations} citation${nCitations === 1 ? "" : "s"}`;
-  const util = typeof ctxUtil === "number"
-    ? `  ·  ctx ${ctxUtil.toFixed(1)}%`
-    : "";
+  const util = typeof ctxUtil === "number" ? `  ·  ctx ${ctxUtil.toFixed(1)}%` : "";
   return `${timing}  ·  ${citeLine}${util}`;
 }
 
@@ -321,8 +317,8 @@ function renderHistoryFromSession(session) {
     return;
   }
   $("empty").style.display = "none";
-  // Walk turns in pairs (user → assistant). If the last user has no assistant
-  // reply (mid-flight), skip rendering it here; the submit flow handles it.
+  // turnKey is the user-turn index (0-based). Scope badge `href`/source `id`
+  // pairs per turn so clicking [1] in turn 2 doesn't jump to turn 0's sources.
   let turnKey = 0;
   for (let i = 0; i < session.turns.length; i++) {
     const t = session.turns[i];
@@ -363,8 +359,6 @@ function updateTruncationIndicator(session) {
   }
 }
 
-// ---------- status dot ----------
-
 async function refreshStatus(settings) {
   const dot = $("statusDot");
   try {
@@ -377,11 +371,9 @@ async function refreshStatus(settings) {
   }
 }
 
-// ---------- wiring ----------
-
-async function init() {
-  const settings = await loadSettings();
-  let session = await loadSession();
+function init() {
+  const settings = loadSettings();
+  let session = loadSession();
 
   $("apiUrl").value = settings.apiUrl;
   $("apiKey").value = settings.apiKey;
@@ -392,26 +384,26 @@ async function init() {
     $("settings").classList.toggle("open");
   });
 
-  $("newConversation").addEventListener("click", async () => {
-    session = await resetSession();
+  $("newConversation").addEventListener("click", () => {
+    session = resetSession();
     $("history").innerHTML = "";
     $("empty").style.display = "";
     updateTruncationIndicator(session);
   });
 
-  $("saveSettings").addEventListener("click", async () => {
+  $("saveSettings").addEventListener("click", () => {
     const next = {
-      apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || DEFAULT_API_URL,
+      apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || window.location.origin,
       apiKey: $("apiKey").value.trim(),
     };
-    await saveSettings(next);
+    saveSettingsSync(next);
     $("settingsStatus").textContent = "Saved.";
     refreshStatus(next);
   });
 
   $("testConnection").addEventListener("click", async () => {
     const s = {
-      apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || DEFAULT_API_URL,
+      apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || window.location.origin,
       apiKey: $("apiKey").value.trim(),
     };
     $("settingsStatus").textContent = "Testing…";
@@ -437,7 +429,7 @@ async function init() {
   async function submit() {
     const q = $("queryInput").value.trim();
     if (!q) return;
-    const settingsNow = await loadSettings();
+    const settingsNow = loadSettings();
     const turnEl = addTurnEl(q, "…");
     turnEl.scrollIntoView({ behavior: "smooth", block: "start" });
     $("queryInput").value = "";
@@ -447,7 +439,7 @@ async function init() {
     const started = Date.now();
 
     const turnId = userTurnCount(session);
-    const turnKey = turnId;
+    const turnKey = turnId;  // same semantic — 0-based user-turn index
     const history = historyForSend(session);
 
     try {
@@ -478,7 +470,7 @@ async function init() {
         query_time_ms: result.query_time_ms,
         context_utilization: result.context_utilization,
       });
-      await saveSession(session);
+      saveSession(session);
       updateTruncationIndicator(session);
     } catch (e) {
       failTurnEl(turnEl, e);

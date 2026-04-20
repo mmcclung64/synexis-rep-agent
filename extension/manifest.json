@@ -1,1 +1,31 @@
-# extension/manifest.json — scaffold placeholder
+{
+  "manifest_version": 3,
+  "name": "Synexis Rep Agent",
+  "version": "0.1.0",
+  "description": "Knowledge-grounded Q&A for Synexis sales reps, powered by the Synexis Rep Agent API.",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "Open Synexis Rep Agent",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "permissions": ["sidePanel", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "https://*.onrender.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
+  }
+}

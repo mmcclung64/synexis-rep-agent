@@ -49,8 +49,8 @@ and configuration tasks, not code. Estimated time: 1.5–2 hours total.
    ```
 
 **Verify:** In the dashboard, confirm the free tier monthly usage resets are shown.
-Note: `rerank-2` is Voyage's current reranking model — confirm the name hasn't
-changed at https://docs.voyageai.com/docs/reranker.
+Note: `rerank-2.5-lite` is Voyage's current reranking model — confirm the name
+hasn't changed at https://docs.voyageai.com/docs/reranker.
 
 ---
 
@@ -88,7 +88,7 @@ changed at https://docs.voyageai.com/docs/reranker.
    | `PINECONE_ENVIRONMENT` | `us-east-1-aws` (confirm in Pinecone dashboard) |
    | `VOYAGE_API_KEY` | your Voyage AI API key |
    | `VOYAGE_EMBEDDING_MODEL` | `voyage-3` |
-   | `VOYAGE_RERANK_MODEL` | `rerank-2` |
+   | `VOYAGE_RERANK_MODEL` | `rerank-2.5-lite` |
    | `ANTHROPIC_API_KEY` | your Anthropic API key |
    | `PARTNER_KEYS` | leave blank for now — add before Beta |
    | `RATE_LIMIT_PER_HOUR` | `100` |
