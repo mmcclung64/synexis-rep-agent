@@ -46,7 +46,6 @@ report lag on long histories.
 
 ### Still open (not yet batched)
 
-- **Retrieval tuning: equipment material compatibility** — 3 candidate approaches in Retrieval Tuning section; awaiting explicit scoping decision
 - **Render load test** ④ — [BETA gate for Partner Beta]; run before external users onboard
 
 ---
@@ -154,7 +153,7 @@ Impact: (1) chunk won't retrieve reliably on natural language maintenance schedu
 
 Fix: re-extract page 13 with table-aware parsing (pdfplumber or camelot) to recover row/column structure, then re-chunk as one row per chunk with column headers prepended (e.g. "Retail Stores — Filter: 6 months, Bulb: 24 months, ..."). Re-embed and upsert to replace the current broken chunks. Check adjacent pages of the same PDF for the same issue — tables in the Application Guide may be affected throughout.
 
-### Retrieval miss: equipment material compatibility queries
+### Retrieval miss: equipment material compatibility queries [FIXED]
 Query "how does it do on various equipment materials (stainless steel, belts, plastics)" returned 0 relevant chunks despite the corpus containing applicable content — SDS non-corrosive data, device construction materials from device manuals (18-gauge stainless steel housing, ABS/polycarbonate, metal mesh catalyst components). The same corpus correctly answered the metals question ("will DHP react with any metals?"), so the chunks exist. The issue is semantic distance between "equipment materials" and the relevant chunk content. Possible fixes: (1) add "material compatibility" as a BM25-boosted keyword cluster in the hybrid retrieval config, (2) add a query expansion step that maps material-type queries to SDS + device manual source filters, or (3) ensure device manual chunks include equipment material compatibility as explicit metadata tags for filtered retrieval.
 
 ---

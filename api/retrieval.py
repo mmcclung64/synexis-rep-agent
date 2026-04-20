@@ -40,7 +40,42 @@ DENSE_TOP_K = 50
 SPARSE_TOP_K = 50
 RERANK_TOP_N = 10
 
+# Extra candidates fetched from the material-compatibility-tagged subset when
+# the query is about equipment materials. CODE_BRIEFING Retrieval Tuning #2,
+# option 3. Small number — reranker decides which to surface.
+MATERIAL_FILTERED_K = 15
+
+# How many material-compat chunks the final rerank output is guaranteed to
+# carry when the query is about materials. Protects against the primary
+# reranker demoting construction-description chunks below generic
+# surface-contamination chunks on queries like "how does it do on stainless
+# steel, belts, plastics".
+MATERIAL_GUARANTEED_SLOTS = 3
+
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+# Query-time detector for material/compatibility questions. More permissive
+# than the chunk-tagging heuristic: false positives here just add a few extra
+# candidates to the rerank pool (no harm), while false negatives leave the
+# original retrieval-miss bug unfixed.
+_MATERIAL_QUERY_RE = re.compile(
+    r"""\b(
+        material | materials | stainless | steel | aluminum | aluminium
+        | polycarbonate | ABS | PVC | polyethylene | HDPE | LDPE
+        | polypropylene | polymer | polymers | plastic | plastics
+        | rubber | silicone | brass | copper | nickel | chrome | chromium
+        | metal | metals | ceramic | fiberglass | nylon | gasket | gaskets
+        | belt | belts | fabric | fabrics
+        | corrosion | corrosive | non[-\s]?corrosive
+        | compatib\w* | react(?:s|ive|ion|ing)?\s+with
+        | equipment\s+material(?:s)?
+    )\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _is_material_query(query: str) -> bool:
+    return bool(_MATERIAL_QUERY_RE.search(query or ""))
 
 
 def _tokenize(text: str) -> List[str]:
@@ -118,9 +153,13 @@ class Retriever:
         return result.embeddings[0]
 
     @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=20))
-    def _dense_search(self, query_vec: List[float], top_k: int) -> List[Hit]:
+    def _dense_search(self, query_vec: List[float], top_k: int,
+                      filter_: Optional[dict] = None) -> List[Hit]:
         self._ensure_clients()
-        resp = self._pc_index.query(vector=query_vec, top_k=top_k, include_metadata=True)
+        kwargs: dict = {"vector": query_vec, "top_k": top_k, "include_metadata": True}
+        if filter_:
+            kwargs["filter"] = filter_
+        resp = self._pc_index.query(**kwargs)
         hits: List[Hit] = []
         for m in resp.matches:
             md = dict(m.metadata or {})
@@ -207,17 +246,59 @@ class Retriever:
         sparse = self._sparse_search(query, sparse_k)
         t3 = _time.time()
         merged = self._merge(dense, sparse)
+
+        # Material-compatibility widening. When the query is about equipment
+        # materials, do an extra filtered dense search restricted to chunks
+        # tagged has_material_compatibility and merge those candidates in.
+        # The reranker decides which actually surface.
+        is_mat = _is_material_query(query)
+        mat_ms = 0
+        if is_mat:
+            t_mat_start = _time.time()
+            try:
+                mat = self._dense_search(
+                    q_vec, MATERIAL_FILTERED_K,
+                    filter_={"has_material_compatibility": {"$eq": True}},
+                )
+                merged = self._merge(merged, mat)
+            except Exception:
+                # Filter may not be supported on some Pinecone index states;
+                # fall through silently rather than breaking the query.
+                pass
+            mat_ms = int((_time.time() - t_mat_start) * 1000)
+
         reranked = self._rerank(query, merged, top_n)
+
+        # Guarantee material-compat chunks reach the context when the query is
+        # about materials. The primary rerank tends to demote device-manual
+        # construction chunks ("the Sphere housing is 18-gauge stainless
+        # steel") below generic surface-mention chunks ("pathogens persist on
+        # stainless steel surfaces"), even though the rep is asking about
+        # compatibility. Second rerank on just the tagged subset surfaces the
+        # top material-compat candidates; splice them in ahead.
+        if is_mat:
+            mat_candidates = [h for h in merged if h.metadata.get("has_material_compatibility")]
+            if mat_candidates:
+                n_slots = min(MATERIAL_GUARANTEED_SLOTS, len(mat_candidates))
+                try:
+                    mat_top = self._rerank(query, mat_candidates, n_slots)
+                except Exception:
+                    mat_top = mat_candidates[:n_slots]
+                existing_ids = {h.chunk_id for h in mat_top}
+                tail = [h for h in reranked if h.chunk_id not in existing_ids]
+                reranked = (mat_top + tail)[:top_n]
         t4 = _time.time()
 
         self.last_timings = {
             "embedding_ms": int((t1 - t0) * 1000),
             "dense_ms": int((t2 - t1) * 1000),
             "sparse_ms": int((t3 - t2) * 1000),
+            "material_filtered_ms": mat_ms,
+            "material_filtered_used": is_mat,
             # reranking subsumes merge (negligible) and the voyage rerank call
             "reranking_ms": int((t4 - t3) * 1000),
-            # "retrieval_ms" = dense + sparse for the briefing's Latency ① schema
-            "retrieval_ms": int((t3 - t1) * 1000),
+            # "retrieval_ms" = dense + sparse (+ material) for Latency ① schema
+            "retrieval_ms": int((t3 - t1) * 1000) + mat_ms,
         }
         return reranked
 

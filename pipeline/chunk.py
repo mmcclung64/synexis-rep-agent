@@ -95,14 +95,53 @@ _COMPAT_CONTEXT_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# "Strong" compat claims that apply broadly across materials — these qualify
+# a chunk as material-compat-relevant even without a specific material noun
+# (e.g., SDS "Not reactive", marketing copy "DHP is non-corrosive"). Keeping
+# this list narrow so it only catches genuine general-safety language.
+_STRONG_COMPAT_CLAIM_RE = re.compile(
+    r"""\b(
+        non[-\s]?corrosive | non[-\s]?corroding | corrosion[-\s]?resistant
+        | non[-\s]?reactive | not\s+reactive
+        | does\s+not\s+(?:corrode | react\s+with | oxidize | damage | degrade)
+        | doesn['']t\s+(?:corrode | react\s+with | oxidize | damage | degrade)
+    )\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
-def has_material_compatibility(text: str) -> bool:
-    """True when a chunk mentions an equipment material AND a compatibility
-    context word in the same chunk. Precision-tuned for retrieval-pool widening —
-    false positives pollute the filtered pool, false negatives miss rows we want."""
+
+# Source categories where a bare material mention is itself relevant: device
+# manuals and product-maintenance guides describe what the hardware is made of,
+# which the briefing explicitly calls out as equipment-material context (Sphere
+# housing is 18-gauge stainless steel, etc.).
+_DEVICE_CATEGORIES = {"Device Manuals", "Manuals and Guides"}
+
+
+def has_material_compatibility(text: str, source_category: str = "") -> bool:
+    """Should this chunk carry has_material_compatibility=true?
+
+    Rules, in order:
+      1. Strong general compat claim ("non-corrosive", "not reactive",
+         "does not corrode/react/oxidize") — qualifies regardless of whether
+         a specific material is named. These claims apply across substrates
+         and are exactly what a rep asking "how does DHP do on various
+         materials" needs.
+      2. Device-manual / maintenance-guide chunks with ANY material noun —
+         construction details ("18-gauge stainless steel housing") count as
+         equipment-material context for retrieval-widening purposes.
+      3. Everything else: requires BOTH a material noun AND a compat context
+         word to avoid false positives from casual material mentions in prose.
+    """
     if not text:
         return False
-    return bool(_MATERIAL_NOUNS_RE.search(text)) and bool(_COMPAT_CONTEXT_RE.search(text))
+    if _STRONG_COMPAT_CLAIM_RE.search(text):
+        return True
+    has_material = bool(_MATERIAL_NOUNS_RE.search(text))
+    if not has_material:
+        return False
+    if source_category in _DEVICE_CATEGORIES:
+        return True
+    return bool(_COMPAT_CONTEXT_RE.search(text))
 
 
 @dataclass
@@ -238,6 +277,9 @@ def chunk_doc(doc_json: dict) -> List[Chunk]:
                     has_efficacy_claim=flag,
                     extension=doc_json["extension"],
                     extractor_used=doc_json["extractor_used"],
+                    has_material_compatibility=has_material_compatibility(
+                        text, doc_json.get("source_category", "")
+                    ),
                 )
             )
             chunk_idx += 1
