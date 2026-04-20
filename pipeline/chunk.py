@@ -48,6 +48,63 @@ EFFICACY_RE = re.compile(
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'\(])")
 
 
+# Material-compatibility classifier. Used to tag chunks that discuss DHP's
+# interaction with (or non-reaction with) specific equipment materials. The
+# retrieval layer widens the candidate pool with a Pinecone metadata filter
+# on `has_material_compatibility: true` when the incoming query is about
+# materials — fixes the equipment-materials retrieval miss from CODE_BRIEFING
+# Retrieval Tuning #2, option (3).
+#
+# A chunk qualifies when BOTH patterns hit:
+#   - _MATERIAL_NOUNS_RE:  names an equipment material (stainless steel,
+#                          polycarbonate, rubber, etc.)
+#   - _COMPAT_CONTEXT_RE:  is in a compatibility context (corrosive, reacts
+#                          with, compatible, safe on, damage/degrade, etc.)
+# Requiring both keeps "a stainless steel table in a cleanroom" (no compat
+# context) from triggering while letting "DHP is non-corrosive on stainless
+# steel" through.
+
+_MATERIAL_NOUNS_RE = re.compile(
+    r"""\b(
+        stainless\s+steel | carbon\s+steel | galvanized\s+\w+
+        | aluminum | aluminium | brass | copper | nickel | chrome | chromium
+        | metal\s+(?:mesh|oxide|housing|catalyst|component|parts?|surfaces?)
+        | 18[-\s]?gauge\s+\w+
+        | polycarbonate | ABS | PVC | polyethylene | HDPE | LDPE
+        | polypropylene | polymer | polymers | polyester | PET | acetal
+        | delrin | PEEK | PTFE | teflon | nylon
+        | rubber | silicone | gasket(?:s)? | O[-\s]?ring(?:s)?
+        | fiberglass | ceramic | fabric(?:s)? | plastic(?:s)?
+    )\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_COMPAT_CONTEXT_RE = re.compile(
+    r"""\b(
+        non[-\s]?corrosive | non[-\s]?corroding | corrosion[-\s]?resistant
+        | corros(?:ion|ive|ive\w*)
+        | compatib(?:le|ility)
+        | react(?:s|ed|ive|ion|s\s+with)
+        | incompatib\w+
+        | material\s+(?:compatibility|safe|safety)
+        | equipment\s+material(?:s)?
+        | safe\s+on\s+\w+
+        | (?:does|doesn['']t)\s+not?\s+(?:corrode|react|damage|degrade|affect|harm)
+        | (?:damages?|degrades?|deteriorat\w+)\s+(?:to|on|with)\s+\w+
+    )\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def has_material_compatibility(text: str) -> bool:
+    """True when a chunk mentions an equipment material AND a compatibility
+    context word in the same chunk. Precision-tuned for retrieval-pool widening —
+    false positives pollute the filtered pool, false negatives miss rows we want."""
+    if not text:
+        return False
+    return bool(_MATERIAL_NOUNS_RE.search(text)) and bool(_COMPAT_CONTEXT_RE.search(text))
+
+
 @dataclass
 class Chunk:
     chunk_id: str
@@ -63,6 +120,11 @@ class Chunk:
     has_efficacy_claim: bool
     extension: str
     extractor_used: str
+    # Retrieval-tuning tag. Present from chunk-time forward; backfilled onto
+    # existing chunks via pipeline/backfill_material_tag.py. When False the
+    # field may be omitted from metadata — Pinecone's $eq:true filter treats
+    # absent == false, which matches our intent.
+    has_material_compatibility: bool = False
 
 
 def _count_tokens(text: str) -> int:

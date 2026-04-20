@@ -70,6 +70,9 @@ class Retriever:
         self._pc_index = None
         self._bm25: Optional[BM25Okapi] = None
         self._corpus: List[dict] = []
+        # Populated by retrieve() on every call with per-step wall-clock timings.
+        # Profiling (CODE_BRIEFING Latency ①) reads this via getattr(r, "last_timings").
+        self.last_timings: dict = {}
 
     # ---------- lazy init ----------
 
@@ -195,11 +198,28 @@ class Retriever:
         dense_k: int = DENSE_TOP_K,
         sparse_k: int = SPARSE_TOP_K,
     ) -> List[Hit]:
+        import time as _time
+        t0 = _time.time()
         q_vec = self._embed_query(query)
+        t1 = _time.time()
         dense = self._dense_search(q_vec, dense_k)
+        t2 = _time.time()
         sparse = self._sparse_search(query, sparse_k)
+        t3 = _time.time()
         merged = self._merge(dense, sparse)
-        return self._rerank(query, merged, top_n)
+        reranked = self._rerank(query, merged, top_n)
+        t4 = _time.time()
+
+        self.last_timings = {
+            "embedding_ms": int((t1 - t0) * 1000),
+            "dense_ms": int((t2 - t1) * 1000),
+            "sparse_ms": int((t3 - t2) * 1000),
+            # reranking subsumes merge (negligible) and the voyage rerank call
+            "reranking_ms": int((t4 - t3) * 1000),
+            # "retrieval_ms" = dense + sparse for the briefing's Latency ① schema
+            "retrieval_ms": int((t3 - t1) * 1000),
+        }
+        return reranked
 
 
 _default_retriever: Optional[Retriever] = None

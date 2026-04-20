@@ -229,6 +229,53 @@
        The overflow-x:auto wrapper handles wide tables by scrolling instead. */
     .table-wrap th:not(:first-child),
     .table-wrap td:not(:first-child) { overflow-wrap: break-word; word-break: normal; }
+
+    .feedback {
+      margin-top: 8px;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--muted);
+    }
+    .feedback .fb-btn {
+      background: none; border: 1px solid var(--line);
+      border-radius: 4px; padding: 3px 8px;
+      font-size: 13px; cursor: pointer; color: var(--muted);
+    }
+    .feedback .fb-btn:hover:not(:disabled) { background: #f3f4f6; color: var(--fg); }
+    .feedback .fb-btn.active { background: #0F2D69; color: #fff; border-color: #0F2D69; }
+    .feedback .fb-btn:disabled { cursor: default; opacity: 0.7; }
+    .feedback .fb-btn.active:disabled { opacity: 1; }
+    .feedback .fb-label { flex: 1; }
+    .feedback .fb-status { color: var(--muted); font-style: italic; }
+    .feedback-form { margin-top: 6px; display: none; flex-direction: column; gap: 6px; }
+    .feedback-form.open { display: flex; }
+    .feedback-form textarea {
+      width: 100%; min-height: 52px; max-height: 120px;
+      padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px;
+      font-size: 12px; font-family: inherit; resize: vertical;
+    }
+    .feedback-form .fb-submit {
+      align-self: flex-start; padding: 4px 10px; font-size: 12px; font-weight: 600;
+      background: var(--accent); color: #fff; border: 1px solid var(--accent);
+      border-radius: 4px; cursor: pointer;
+    }
+    .feedback-form .fb-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    dialog.name-prompt {
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: 16px; max-width: 320px; font-family: inherit;
+    }
+    dialog.name-prompt::backdrop { background: rgba(0,0,0,0.25); }
+    dialog.name-prompt h2 { font-size: 15px; margin: 0 0 4px; }
+    dialog.name-prompt p { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+    dialog.name-prompt input {
+      width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+      border-radius: 4px; font-size: 13px; font-family: inherit; margin-bottom: 8px;
+    }
+    dialog.name-prompt .row button.primary {
+      background: var(--accent); color: white; border: 1px solid var(--accent);
+      padding: 6px 12px; border-radius: 4px; cursor: pointer;
+      font-size: 13px; font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -240,6 +287,8 @@
   </header>
 
   <section id="settings">
+    <label for="userName">Your name</label>
+    <input type="text" id="userName" placeholder="e.g. Nick Buckley" autocomplete="off" />
     <label for="apiUrl">API URL</label>
     <input type="text" id="apiUrl" placeholder="same origin (leave blank)" />
     <label for="apiKey">Partner key (optional)</label>
@@ -249,7 +298,19 @@
       <button id="testConnection">Test connection</button>
     </div>
     <div class="status" id="settingsStatus"></div>
+    <div class="status">Queries are logged to help improve the agent.</div>
   </section>
+
+  <dialog id="namePromptDialog" class="name-prompt">
+    <form method="dialog">
+      <h2>Enter your name</h2>
+      <p>Used to identify your feedback in Beta. One-time setup.</p>
+      <input type="text" id="namePromptInput" placeholder="e.g. Nick Buckley" autocomplete="off" required />
+      <div class="row">
+        <button class="primary" value="ok">Continue</button>
+      </div>
+    </form>
+  </dialog>
 
   <main>
     <div id="empty">Ask a product, efficacy, or vertical question. Answers cite the Synexis knowledge base.</div>

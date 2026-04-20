@@ -299,7 +299,32 @@ class AnswerGenerator:
             input_tokens = getattr(usage, "input_tokens", None)
         return "".join(parts).strip(), input_tokens
 
+    def _claude_stream(self, messages: List[dict]):
+        """Yield (text_delta, final_message) pairs. text_delta is a str chunk until
+        the stream completes, then one final call yields (None, final_message).
+        """
+        self._ensure_ready()
+        with self._anthropic.messages.stream(
+            model=ANTHROPIC_MODEL,
+            max_tokens=MAX_TOKENS,
+            system=[
+                {
+                    "type": "text",
+                    "text": self._system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text, None
+            final = stream.get_final_message()
+            yield None, final
+
     def generate(self, query: str, history: Optional[List[dict]] = None) -> dict:
+        import time as _time
+        t_start = _time.time()
+
         # 1. Rewrite the query for retrieval when we have enough history.
         #    The rewriter resolves context references and normalizes non-standard
         #    terminology. Generation still receives the original history + the
@@ -307,9 +332,11 @@ class AnswerGenerator:
         rewrite = get_rewriter().rewrite(query, history or [])
         retrieval_query = rewrite.rewritten
 
-        # 2. Retrieve against the rewritten (or original) query.
+        # 2. Retrieve against the rewritten (or original) query. Retriever
+        #    populates last_timings with per-step wall-clock breakdowns.
         retriever = get_retriever()
         raw_hits = retriever.retrieve(retrieval_query, top_n=RETRIEVE_TOP_N)
+        retrieve_timings = dict(retriever.last_timings)
 
         # 3. Dedup across copy-pasted slide decks
         hits = _dedup_by_text(raw_hits)[:CONTEXT_MAX_CHUNKS]
@@ -322,6 +349,21 @@ class AnswerGenerator:
             "elapsed_ms": rewrite.elapsed_ms,
         }
 
+        # Assemble the briefing's Latency-① timing schema. Empty-result path
+        # still returns a timing dict so dashboards don't break on early exit.
+        def _timing(generation_ms: int = 0) -> dict:
+            return {
+                "rewrite_ms": rewrite.elapsed_ms if not rewrite.skipped else None,
+                "embedding_ms": retrieve_timings.get("embedding_ms", 0),
+                "retrieval_ms": retrieve_timings.get("retrieval_ms", 0),
+                "reranking_ms": retrieve_timings.get("reranking_ms", 0),
+                "generation_ms": generation_ms,
+                "total_ms": int((_time.time() - t_start) * 1000),
+                # Non-schema extras kept for debugging:
+                "dense_ms": retrieve_timings.get("dense_ms", 0),
+                "sparse_ms": retrieve_timings.get("sparse_ms", 0),
+            }
+
         if not hits:
             return {
                 "answer": (
@@ -333,6 +375,7 @@ class AnswerGenerator:
                 "history_turns_used": 0,
                 "context_utilization": None,
                 "rewrite": rewrite_payload,
+                "timing": _timing(generation_ms=0),
             }
 
         # 4. Build the messages array: sanitized prior history + new user turn.
@@ -346,8 +389,10 @@ class AnswerGenerator:
             {"role": "user", "content": new_user_message}
         ]
 
-        # 5. Claude call
+        # 5. Claude call — wrapped for generation_ms timing.
+        t_gen = _time.time()
         raw_answer, input_tokens = self._claude_call(messages)
+        generation_ms = int((_time.time() - t_gen) * 1000)
 
         # 6. Strip Claude's own Sources section — the client renders one canonical
         #    list from the citations array below.
@@ -378,6 +423,109 @@ class AnswerGenerator:
             "history_turns_used": len(sanitized),
             "context_utilization": context_utilization,
             "rewrite": rewrite_payload,
+            "timing": _timing(generation_ms=generation_ms),
+        }
+
+
+    def generate_stream(self, query: str, history: Optional[List[dict]] = None):
+        """Streaming variant of generate(). Yields dicts that the transport
+        layer serializes as NDJSON lines:
+
+            {"type": "delta", "text": "..."}   — raw Claude text chunks
+            {"type": "final", "answer": ..., "citations": [...], ...}
+
+        The client is expected to show deltas as they arrive (escaped, no
+        citation badges — since [N] numbers may change after dedup/renumber),
+        then re-render using `final.answer` + `final.citations` when the
+        final event arrives.
+        """
+        import time as _time
+        t_start = _time.time()
+
+        rewrite = get_rewriter().rewrite(query, history or [])
+        retrieval_query = rewrite.rewritten
+
+        retriever = get_retriever()
+        raw_hits = retriever.retrieve(retrieval_query, top_n=RETRIEVE_TOP_N)
+        retrieve_timings = dict(retriever.last_timings)
+
+        hits = _dedup_by_text(raw_hits)[:CONTEXT_MAX_CHUNKS]
+
+        rewrite_payload = {
+            "original": rewrite.original,
+            "rewritten": rewrite.rewritten,
+            "skipped": rewrite.skipped,
+            "reason": rewrite.reason,
+            "elapsed_ms": rewrite.elapsed_ms,
+        }
+
+        def _timing(generation_ms: int) -> dict:
+            return {
+                "rewrite_ms": rewrite.elapsed_ms if not rewrite.skipped else None,
+                "embedding_ms": retrieve_timings.get("embedding_ms", 0),
+                "retrieval_ms": retrieve_timings.get("retrieval_ms", 0),
+                "reranking_ms": retrieve_timings.get("reranking_ms", 0),
+                "generation_ms": generation_ms,
+                "total_ms": int((_time.time() - t_start) * 1000),
+                "dense_ms": retrieve_timings.get("dense_ms", 0),
+                "sparse_ms": retrieve_timings.get("sparse_ms", 0),
+            }
+
+        if not hits:
+            yield {
+                "type": "final",
+                "answer": (
+                    "I don't have that information in my knowledge base. "
+                    "For this one, contact Synexis support."
+                ),
+                "citations": [],
+                "history_turns_used": 0,
+                "context_utilization": None,
+                "rewrite": rewrite_payload,
+                "timing": _timing(0),
+            }
+            return
+
+        sanitized = _sanitize_history(history or [])
+        context_block = _format_context(hits)
+        new_user_message = f"Question: {query}\n\nContext:\n{context_block}"
+        messages: List[dict] = list(sanitized) + [
+            {"role": "user", "content": new_user_message}
+        ]
+
+        # Stream deltas as they arrive.
+        t_gen = _time.time()
+        accumulated: List[str] = []
+        final_message = None
+        for text_delta, fin in self._claude_stream(messages):
+            if text_delta is not None:
+                accumulated.append(text_delta)
+                yield {"type": "delta", "text": text_delta}
+            if fin is not None:
+                final_message = fin
+        generation_ms = int((_time.time() - t_gen) * 1000)
+
+        raw_answer = "".join(accumulated).strip()
+        input_tokens = None
+        usage = getattr(final_message, "usage", None) if final_message else None
+        if usage is not None:
+            input_tokens = getattr(usage, "input_tokens", None)
+
+        body = _strip_sources_section(raw_answer)
+        answer_text, citations = _rewrite_citations(body, hits)
+
+        context_utilization: Optional[float] = None
+        if isinstance(input_tokens, int) and input_tokens > 0:
+            context_utilization = round(input_tokens / CONTEXT_WINDOW_TOKENS * 100, 2)
+
+        yield {
+            "type": "final",
+            "answer": answer_text,
+            "citations": citations,
+            "history_turns_used": len(sanitized),
+            "context_utilization": context_utilization,
+            "rewrite": rewrite_payload,
+            "timing": _timing(generation_ms),
         }
 
 

@@ -4,6 +4,53 @@ Ongoing notes and refinements from live testing. Share with Code at appropriate 
 
 ---
 
+## Current Batch — April 20, 2026 [COMPLETE]
+
+All items complete except #10 (Haiku validator — no existing classifier to swap; see Next Batch).
+Items 3–6, 12–13 were already applied in prior sessions. Regression eval: 17/18 (one flake is
+a test-design issue on VOC/CFU context-blind rule, not a regression).
+
+### Tier 1 — Beta blockers [ALL DONE ✅]
+
+1. **Pipeline profiling** ✅ — per-step timings on retriever.last_timings + timing dict on every generate() result
+2. **Streaming** ✅ — NDJSON delta/final events; client re-renders on final; non-streaming JSON preserved
+3. **Below-threshold fallback** ✅ already applied — system_prompt.txt line 71
+4. **Citation dedup** ✅ already applied — _rewrite_citations collapses on source_key_to_new_n
+5. **Sources list sort** ✅ already applied — sorted(new_n_to_hit.keys())
+6. **Citation renumbering** ✅ already applied — old_to_new map + regex sub
+7. **Per-user identity** ✅ — "Your name" field in Settings; first-launch dialog; sent as user on every POST
+8. **Server-side logging** ✅ — logs/queries.jsonl @ 10MB × 5 backups; briefing-exact schema via log_query_record
+9. **Feedback affordances** ✅ — 👍/👎 per turn, expandable free-text on 👎, POST /feedback → log_feedback_record
+
+### Tier 2 — Beta quality [MOSTLY DONE ✅]
+
+10. **Haiku input validator** ⚠️ skipped — no existing Sonnet classifier to swap; net-new module required (see Next Batch)
+11. **Application Guide page 13 re-extraction** ✅ — deleted broken chunks, upserted 33 row-oriented chunks
+12. **Sources list citation color** ✅ already applied — .cite .n in both HTML files
+13. **Citation tooltip left-edge clipping** ✅ already applied — Math.max/min clamp in both JS files
+
+---
+
+## Current Batch — April 20, 2026 (pass 2) [COMPLETE]
+
+All 4 items complete. Scroll behavior was previously set to "auto" by Code to avoid streaming
+jitter — flipped to "smooth" per briefing. CSS scroll-behavior fallback available if Beta users
+report lag on long histories.
+
+### Items [ALL DONE ✅]
+
+1. **Haiku input validator (net-new)** ✅ — see Beta Features → Input Validator
+2. **Feedback UI — free text on both 👍 and 👎** ✅ — "Anything to add?" / "Where did it miss?"
+3. **Feedback UI — selected state persists after rating click** ✅
+4. **Scroll behavior on new answer** ✅ — `scrollIntoView({ behavior: "smooth", block: "start" })`
+
+### Still open (not yet batched)
+
+- **Retrieval tuning: equipment material compatibility** — 3 candidate approaches in Retrieval Tuning section; awaiting explicit scoping decision
+- **Render load test** ④ — [BETA gate for Partner Beta]; run before external users onboard
+
+---
+
 ## System Prompt Refinements
 
 ### Don't expose retrieval mechanics
@@ -134,7 +181,7 @@ Switch the input validator from Sonnet to Haiku. The classification task (is thi
 
 The Render Starter tier (0.5 CPU, 512MB RAM) has not been tested under concurrent load. Under 5–10 simultaneous users, CPU contention may add 500ms–2s of queued latency that doesn't appear in single-query testing. Run a concurrency test (5–10 parallel requests) before internal Beta. If p95 latency spikes >20% vs. single-query baseline, upgrade to the next tier ($12/month) — the cost delta is negligible.
 
-### ⑤ Session-level response caching [BETA]
+### ⑤ Session-level response caching [DEFERRED — post-Beta]
 
 Cache responses per session with a 30-minute TTL. Keyed on normalized query string within a session. **Do not implement cross-session caching** — if the corpus is evolving (new docs ingested, old ones deprecated), a cross-session cache will silently serve stale answers. Session-level cache is safe (TTL is short, corpus changes between sessions are expected) and still provides meaningful speed improvement for Alpha testing where the same questions are re-run repeatedly. Cache-bust strategy: invalidate all session caches on any corpus ingest event.
 
@@ -158,9 +205,76 @@ The trigger condition from the original deferral has been met. Copilot's multi-t
 - Skip rewrite when history is empty or fewer than 2 turns — avoid wasting a Haiku call on effectively stateless queries
 - Log both original and rewritten query on every turn — required for debugging and measuring whether rewriting actually improved retrieval
 
-### ⑧ Voyage AI call batching [POST-BETA]
+### ⑧ Voyage AI call batching [DEFERRED — post-Beta]
 
 If embedding and reranking are running as separate sequential API calls, combining or pipelining them could save 50–100ms. Low priority; measure first.
+
+---
+
+## Beta Features
+
+### Input Validator (net-new Haiku classifier)
+
+A lightweight Haiku-based classifier that sits at the top of the pipeline, before retrieval. Checks whether the incoming query is on-topic for a Synexis sales agent. If off-topic, returns a canned response without hitting Pinecone or Claude generation.
+
+**Reject conditions:**
+- Off-topic queries (nothing to do with Synexis products, DHP, pathogen control, or sales support)
+- Medical advice requests ("should I use this on my patient with X condition")
+- PII in the query
+- Rate abuse patterns (repeated identical or near-identical queries in a short window)
+
+**Implementation:**
+- Single Haiku API call with a tight classifier prompt before the retrieval step
+- Returns `{"on_topic": true/false, "reject_reason": "string or null"}`
+- If `on_topic: false`, skip retrieval and generation; return canned response with `reject_reason` logged
+- Log all rejections in `logs/queries.jsonl` with `event_type: "rejected"` and `reject_reason`
+- Latency target: <150ms (Haiku on a short classifier prompt)
+
+### Per-user identity
+
+Beta users need to be identifiable in feedback and query logs — not for security, but so 3–5 people can understand each other's notes and flag who said what during content governance.
+
+**Extension changes:**
+- Add a Settings panel (gear icon or similar) to the sidebar with a single text field: "Your name"
+- Name is saved to `chrome.storage.local` — persists across sessions
+- If name is not set, show a one-time prompt on first launch: "Enter your name to continue (used to identify your feedback)"
+- Name is sent as `user` field on every `/query` POST and every `/feedback` POST
+
+**API changes:**
+- `QueryRequest`: add optional `user: str` field
+- `FeedbackRequest`: add optional `user: str` field
+- Include `user` in all structured log entries
+
+### Server-side logging
+
+Every query and response must be logged server-side for VoC analysis. Beta users should be informed queries are logged — add a one-line disclosure to the extension settings panel or first-launch prompt: "Queries are logged to help improve the agent."
+
+**Log schema (structured JSON, one entry per query):**
+
+```json
+{
+  "timestamp": "ISO 8601",
+  "session_id": "string",
+  "turn_id": "integer",
+  "user": "string",
+  "query_original": "string",
+  "query_rewritten": "string or null",
+  "sources": [{"file_path": "string", "page_or_slide": "string", "citation_index": "integer"}],
+  "response": "string",
+  "timing": {
+    "input_validation_ms": "integer",
+    "embedding_ms": "integer",
+    "retrieval_ms": "integer",
+    "reranking_ms": "integer",
+    "rewrite_ms": "integer or null",
+    "generation_ms": "integer",
+    "total_ms": "integer"
+  },
+  "context_utilization_pct": "float"
+}
+```
+
+Log to a rotating file (`logs/queries.jsonl`) using the same structured logger as feedback events. Feedback events log to the same file with a `"event_type": "feedback"` field.
 
 ---
 
@@ -227,7 +341,7 @@ Add inline feedback controls to each answer turn in the extension. Appears after
 
 **Why this matters for internal Beta:** Nick, Richelle, and Jimmy flagging bad answers inline — with context on what was wrong — is the primary mechanism for identifying corpus gaps and nuance failures before Partner Beta. Free text is where the value is; thumbs down alone isn't actionable.
 
-### Feedback-to-corpus pipeline — auto-generate candidate content from SME corrections [Beta]
+### Feedback-to-corpus pipeline — auto-generate candidate content from SME corrections [DEFERRED — post-Beta]
 
 When a thumbs-down with free text is submitted, the `/feedback` endpoint should do two things: log the event (as above) and automatically generate a candidate Q&A document for corpus review. The candidate document contains the original question, the agent's answer, and the SME's correction formatted as an approved-answer entry. It is dropped into `source_content/` with status `pending-governance` and triggers a notification (email or Slack) summarizing what was flagged. Nothing is ingested until a governance owner explicitly approves it — the existing manifest status system handles this without any new infrastructure.
 
@@ -241,7 +355,7 @@ A minimal admin panel alongside the existing `/ui` route. Displays all `pending-
 
 ## Planned Capabilities (Post-Beta)
 
-### Nightly trade press sweep
+### Nightly trade press sweep [DEFERRED — post-Beta]
 Add a nightly scheduled task that searches a defined list of trade publications (*Infection Prevention Today*, *APIC*, *Food Safety News*, etc.) for articles matching relevant keywords (DHP, dry hydrogen peroxide, infection prevention, HAI, food safety, bioburden, etc.). Fetches full text of any hits, drops them into `source_content/` with status `pending-governance`, and sends a notification (email or Slack) summarizing what was found. Governance review (Nick / Richelle / Jimmy) approves items before they're ingested into the corpus. Requires a news/web search API — Google News API, NewsAPI.org, or Exa are candidate options. Fits cleanly into the existing drop-folder pipeline architecture. No web access added to the agent itself — sweep is a separate upstream process.
 
 ---

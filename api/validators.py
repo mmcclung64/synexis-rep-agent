@@ -50,6 +50,14 @@ class QueryRequest(BaseModel):
         le=10_000,
         description="Zero-based turn index within the session.",
     )
+    # Beta feature: per-user identity. Free-text name the rep entered in the
+    # extension settings. Used to attribute queries + feedback in governance
+    # review — NOT a security credential.
+    user: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description="Beta user's name, from extension settings; logged for VoC attribution.",
+    )
 
 
 class Citation(BaseModel):
@@ -59,6 +67,21 @@ class Citation(BaseModel):
     page_or_slide: Optional[object] = None
     source_category: Optional[str] = None
     snippet: Optional[str] = None  # first ~200 chars of the source chunk; used for hover tooltips in the client
+
+
+class FeedbackRequest(BaseModel):
+    rating: Literal["up", "down"]
+    query: str = Field(..., max_length=2000)
+    answer: str = Field(..., max_length=40_000)
+    citations: List[Citation] = Field(default_factory=list)
+    feedback_text: Optional[str] = Field(default=None, max_length=5000)
+    session_id: Optional[str] = Field(default=None, max_length=64)
+    turn_id: Optional[int] = Field(default=None, ge=0, le=10_000)
+    user: Optional[str] = Field(default=None, max_length=120)
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool = True
 
 
 class QueryRewriteInfo(BaseModel):

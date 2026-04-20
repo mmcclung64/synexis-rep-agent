@@ -17,6 +17,7 @@ function loadSettings() {
   return {
     apiUrl: (s.apiUrl || window.location.origin).replace(/\/$/, ""),
     apiKey: s.apiKey || "",
+    userName: s.userName || "",
   };
 }
 
@@ -93,6 +94,63 @@ async function postQuery(settings, payload) {
     throw e;
   }
   return body;
+}
+
+async function streamQuery(settings, payload, onDelta) {
+  const res = await fetch(`${settings.apiUrl}/query`, {
+    method: "POST",
+    headers: { ...headersFor(settings), Accept: "application/x-ndjson" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { parsed = { detail: text }; }
+    const retryAfter = res.headers.get("Retry-After");
+    const e = new Error(parsed?.detail || `HTTP ${res.status}`);
+    e.status = res.status;
+    if (retryAfter) e.retryAfter = retryAfter;
+    throw e;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let finalEvent = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.type === "delta") {
+        onDelta(ev.text || "");
+      } else if (ev.type === "final") {
+        finalEvent = ev;
+      } else if (ev.type === "error") {
+        throw new Error(ev.message || "stream error");
+      }
+    }
+  }
+  if (!finalEvent) throw new Error("stream ended without final event");
+  return finalEvent;
+}
+
+async function postFeedback(settings, payload) {
+  const res = await fetch(`${settings.apiUrl}/feedback`, {
+    method: "POST",
+    headers: headersFor(settings),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `feedback ${res.status}`);
+  }
+  return res.json().catch(() => ({ ok: true }));
 }
 
 // ---------- rendering ----------
@@ -292,6 +350,80 @@ function finalizeTurnEl(turnEl, answer, citations, meta, turnKey) {
   turnEl.querySelector(".meta").textContent = meta || "";
 }
 
+function attachFeedbackControls(turnEl, ctx) {
+  const fb = document.createElement("div");
+  fb.className = "feedback";
+  fb.innerHTML =
+    `<button class="fb-btn fb-up" title="Helpful" type="button">👍</button>` +
+    `<button class="fb-btn fb-down" title="Not helpful" type="button">👎</button>` +
+    `<span class="fb-label"></span>` +
+    `<span class="fb-status"></span>`;
+  const form = document.createElement("div");
+  form.className = "feedback-form";
+  form.innerHTML =
+    `<textarea placeholder=""></textarea>` +
+    `<button class="fb-submit" type="button">Submit</button>`;
+
+  turnEl.appendChild(fb);
+  turnEl.appendChild(form);
+
+  const up = fb.querySelector(".fb-up");
+  const down = fb.querySelector(".fb-down");
+  const status = fb.querySelector(".fb-status");
+  const textarea = form.querySelector("textarea");
+  const submit = form.querySelector(".fb-submit");
+
+  let selectedRating = null;
+  let submitted = false;
+
+  function selectRating(rating) {
+    if (submitted) return;
+    selectedRating = rating;
+    up.classList.toggle("active", rating === "up");
+    down.classList.toggle("active", rating === "down");
+    textarea.placeholder = rating === "up"
+      ? "Anything to add? (optional)"
+      : "Where did it miss? (optional)";
+    form.classList.add("open");
+    textarea.focus();
+  }
+
+  async function sendRating() {
+    if (submitted || !selectedRating) return;
+    submitted = true;
+    up.disabled = true;
+    down.disabled = true;
+    submit.disabled = true;
+    const freeText = textarea.value.trim();
+    status.textContent = "sending…";
+    const settingsNow = loadSettings();
+    try {
+      await postFeedback(settingsNow, {
+        rating: selectedRating,
+        query: ctx.query,
+        answer: ctx.answer,
+        citations: ctx.citations,
+        feedback_text: freeText || null,
+        session_id: ctx.sessionId,
+        turn_id: ctx.turnId,
+        user: settingsNow.userName || null,
+      });
+      status.textContent = selectedRating === "up" ? "thanks!" : "thanks — noted.";
+      form.classList.remove("open");
+    } catch (e) {
+      status.textContent = `failed — ${e.message}`;
+      submitted = false;
+      up.disabled = false;
+      down.disabled = false;
+      submit.disabled = false;
+    }
+  }
+
+  up.addEventListener("click", () => selectRating("up"));
+  down.addEventListener("click", () => selectRating("down"));
+  submit.addEventListener("click", () => sendRating());
+}
+
 function failTurnEl(turnEl, err) {
   const retry = err.retryAfter ? ` (retry after ${err.retryAfter}s)` : "";
   const msg = `Error: ${err.message}${retry}`;
@@ -371,10 +503,34 @@ async function refreshStatus(settings) {
   }
 }
 
-function init() {
-  const settings = loadSettings();
+async function ensureUserName(settings) {
+  if (settings.userName) return settings;
+  const dlg = $("namePromptDialog");
+  const input = $("namePromptInput");
+  if (!dlg || !input) return settings;
+  input.value = "";
+  try { dlg.showModal(); } catch { /* older browsers */ }
+  const name = await new Promise((resolve) => {
+    const onSubmit = (ev) => {
+      ev.preventDefault();
+      const v = input.value.trim();
+      if (!v) return;
+      dlg.close();
+      resolve(v);
+    };
+    dlg.querySelector("form").addEventListener("submit", onSubmit, { once: true });
+  });
+  const next = { ...settings, userName: name };
+  saveSettingsSync(next);
+  return next;
+}
+
+async function init() {
+  let settings = loadSettings();
+  settings = await ensureUserName(settings);
   let session = loadSession();
 
+  $("userName").value = settings.userName;
   $("apiUrl").value = settings.apiUrl;
   $("apiKey").value = settings.apiKey;
 
@@ -395,6 +551,7 @@ function init() {
     const next = {
       apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || window.location.origin,
       apiKey: $("apiKey").value.trim(),
+      userName: $("userName").value.trim(),
     };
     saveSettingsSync(next);
     $("settingsStatus").textContent = "Saved.";
@@ -442,32 +599,51 @@ function init() {
     const turnKey = turnId;  // same semantic — 0-based user-turn index
     const history = historyForSend(session);
 
+    const payload = {
+      query: q,
+      history,
+      session_id: session.sessionId,
+      turn_id: turnId,
+      user: settingsNow.userName || null,
+    };
+
+    const answerEl = turnEl.querySelector(".a");
+    let streamedText = "";
+
     try {
-      const result = await postQuery(settingsNow, {
-        query: q,
-        history,
-        session_id: session.sessionId,
-        turn_id: turnId,
+      const result = await streamQuery(settingsNow, payload, (chunk) => {
+        streamedText += chunk;
+        answerEl.textContent = streamedText;
       });
       const wallMs = Date.now() - started;
+      const serverMs = (result.timing && result.timing.total_ms) || null;
       finalizeTurnEl(
         turnEl,
-        result.answer,
+        result.answer || streamedText,
         result.citations || [],
         formatMeta(
-          result.query_time_ms,
+          serverMs,
           wallMs,
           (result.citations || []).length,
           result.context_utilization,
         ),
         turnKey,
       );
+      attachFeedbackControls(turnEl, {
+        query: q,
+        answer: result.answer || "",
+        citations: result.citations || [],
+        sessionId: session.sessionId,
+        turnId: turnId,
+      });
+      const qEl = turnEl.querySelector(".q");
+      if (qEl) qEl.scrollIntoView({ behavior: "smooth", block: "start" });
       session.turns.push({ role: "user", content: q });
       session.turns.push({
         role: "assistant",
         content: result.answer || "",
         citations: result.citations || [],
-        query_time_ms: result.query_time_ms,
+        query_time_ms: serverMs,
         context_utilization: result.context_utilization,
       });
       saveSession(session);
