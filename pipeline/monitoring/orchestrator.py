@@ -23,7 +23,7 @@ import sys
 import traceback
 from typing import Any, Dict, List, Optional
 
-from pipeline.monitoring import feed_synexis_web
+from pipeline.monitoring import feed_outbreaks, feed_synexis_web
 from pipeline.monitoring.utils import append_monitoring_log
 
 # Registered feeds in run order. Add new feeds here as they are implemented.
@@ -33,8 +33,11 @@ FEEDS: List[Dict[str, Any]] = [
         "module": feed_synexis_web,
         "description": "synexis.com change monitor",
     },
-    # Future feeds — uncomment as implemented:
-    # {"name": "outbreaks", "module": feed_outbreaks, "description": "ProMED + FDA outbreak monitor"},
+    {
+        "name": "outbreaks",
+        "module": feed_outbreaks,
+        "description": "ProMED + FDA outbreak intelligence monitor",
+    },
 ]
 
 

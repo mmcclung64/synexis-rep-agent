@@ -77,48 +77,19 @@ Key implementation notes:
 - _get() catches UnicodeError + ValueError so malformed IDNA redirect hostnames don't kill crawl.
 - SMTP env vars added to .env (SMTP_HOST/PORT/USER/PASSWORD, NOTIFY_EMAIL).
 
-## Next Batch — Feed 2: Outbreak Monitor
+## Current Batch — Feed 2: Outbreak Monitor [COMPLETE]
 
-Implement after Feed 1 commit is pushed. Full spec below.
+Completed April 21, 2026. Bootstrap: 155 items seeded in logs/outbreaks_state.json.
+Verification dry-run returned items_new=0 as expected. Orchestrator updated to run both feeds.
 
-### Feed 2: Outbreak monitor
-
-3. **Feed 2 — Outbreak monitor** — `pipeline/monitoring/feed_outbreaks.py`
-
-   **Sources:**
-   - ProMED RSS feed (`https://promedmail.org/feed/`) — primary; fast, global, covers HAI + food safety
-   - FDA outbreak investigations page (`https://www.fda.gov/food/outbreaks-foodborne-illness/investigations-foodborne-illness-outbreaks`) — secondary; authoritative, structured, food/healthcare focus
-
-   **Per-item pipeline:**
-   1. Fetch new items since last run (store last-seen IDs in `pipeline/monitoring/state/outbreaks_state.json`)
-   2. For each new item: Haiku API call to extract structured fields — `pathogen`, `affected_vertical` (healthcare / food processing / poultry / other), `geography` (list of US states + optionally metro areas), `severity` (outbreak / investigation / advisory), `summary` (2–3 sentence plain English), `source_url`
-   3. Skip items where `affected_vertical` is not relevant to Synexis markets or geography is non-US (unless significant)
-
-   **Three outputs per qualifying item:**
-
-   **Output A — HubSpot tasks:**
-   - Two-pass company matching:
-     - Pass 1: named company in ProMED/FDA item → search HubSpot companies by name
-     - Pass 2: no named company → query HubSpot companies where `state` is in `geography` AND `industry` matches `affected_vertical`
-   - For each matched company: get contacts + contact owner → create HubSpot task assigned to owner
-   - Task subject: `[Outbreak Alert] {pathogen} — {geography}`
-   - Task body: pathogen, affected area, severity, suggested talking point ("DHP has demonstrated X% efficacy against {pathogen} — timely reason to reach out"), source link
-   - No HubSpot match → no HubSpot action; continue to outputs B and C regardless
-
-   **Output B — Corpus:**
-   - Write outbreak summary (structured markdown) to `source_content/Outbreak Intelligence/YYYY-MM-DD_{pathogen}_{state}.md` with `pending-governance` status
-   - Governance owner reviews before ingest — same pipeline as all other content
-
-   **Output C — Marketing email digest:**
-   - Accumulate qualifying items across the day's run
-   - At end of run: if any new items, send email digest to `marketing@synexis.com`
-   - Subject: `Outbreak Intelligence Digest — {date}`
-   - Body: one entry per outbreak — pathogen, geography, affected vertical, severity, suggested campaign angle, source link
-   - No new items → no email sent
-
-   **Dependencies:** `feedparser` (ProMED RSS), `requests` + `BeautifulSoup` (FDA scrape), HubSpot API (existing pattern from prior scripts), `smtplib` or SendGrid for email
-   **Dry-run mode (default):** prints parsed items + would-be HubSpot matches + email preview, no writes/API calls
-   **`--confirm`:** full run with all outputs
+Key implementation notes:
+- ProMED RSS (promedmail.org/feed/) is dead since their 2024 Next.js migration — swapped to
+  CDC Food Safety RSS (authoritative, 20 active items, same Synexis relevance). Documented in
+  code comments.
+- HubSpot output is env-gated: skips cleanly if HUBSPOT_ACCESS_TOKEN absent; outputs B and C
+  still fire. Required scopes documented in .env.
+- New deps: feedparser==6.0.11 (add to requirements.txt).
+- New env vars: HUBSPOT_ACCESS_TOKEN, MARKETING_EMAIL (both optional).
 
 ### Still open (not yet batched)
 

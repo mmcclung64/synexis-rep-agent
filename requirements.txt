@@ -27,10 +27,11 @@ tiktoken==0.7.0           # Token counting for chunk size targeting
 # Retrieval — sparse (BM25)
 rank-bm25==0.2.2
 
-# Web scraping (monitoring feeds)
+# Web scraping + RSS (monitoring feeds)
 requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.3.0               # Fast XML/HTML parser for BeautifulSoup (sitemap parsing)
+feedparser==6.0.11        # RSS/Atom feed parsing (outbreak monitor)
 
 # Utilities
 python-dotenv==1.0.1
