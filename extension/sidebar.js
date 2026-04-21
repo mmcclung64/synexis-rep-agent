@@ -4,7 +4,7 @@
 // sidebar closing and reopening. Only the last MAX_HISTORY_TURNS turns are sent
 // on each /query request; the server applies its own safety truncation on top.
 
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_URL = "https://synexis-rep-agent.onrender.com";
 const SETTINGS_KEY = "sra.settings";
 const SESSION_KEY = "sra.session";
 const MAX_HISTORY_TURNS = 8;
