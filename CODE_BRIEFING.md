@@ -65,86 +65,23 @@ are reaching retrieval.
 
 ---
 
-## Next Batch — Monitoring Orchestrator + Feeds 1 & 2
+## Current Batch — Monitoring Orchestrator + Feed 1 [COMPLETE]
 
-Implement in order. Full specs below. Do not implement anything marked [DEFERRED] or [POST-BETA].
+Completed April 21, 2026. Bootstrap run: 182 pages baselined in logs/synexis_web_state.json
+(sitemap 732 → 248 HTML-like → 182 passed 100-char minimum). Daily monitor armed.
 
-### Tier 1 — Feed 1: synexis.com monitor (implement first)
+Key implementation notes:
+- synexis.com uses a sitemap index (7 child sitemaps); _parse_sitemap() recurses correctly.
+- Domain filter uses _same_domain() stripping www. prefix — handles synexis.com/www.synexis.com.
+- Gap check disabled by default (--gap-check flag); corpus not URL-keyed yet.
+- _get() catches UnicodeError + ValueError so malformed IDNA redirect hostnames don't kill crawl.
+- SMTP env vars added to .env (SMTP_HOST/PORT/USER/PASSWORD, NOTIFY_EMAIL).
 
-1. **Monitoring orchestrator skeleton** — new directory `pipeline/monitoring/`. Single entry point `orchestrator.py` that runs each active feed module in sequence on a configurable schedule. Shared output interface: drop files to `source_content/` with `pending-governance` status + structured notification log at `logs/monitoring.jsonl`. Also create `pipeline/monitoring/utils.py` with a shared email utility — both Feed 1 and Feed 2 need email notification; build it once here so feeds can import it.
+## Next Batch — Feed 2: Outbreak Monitor
 
-2. **Feed 1 — synexis.com change monitor** — `pipeline/monitoring/feed_synexis_web.py`
+Implement after Feed 1 commit is pushed. Full spec below.
 
-   **What it does:** Two modes — a one-time bootstrap pass to ensure full corpus coverage, then daily monitoring of the whole site for substantive content changes.
-
-   **Content extractor note:** synexis.com is server-rendered HTML — `requests` + `BeautifulSoup` is sufficient. No Playwright needed. Extract visible body text only; strip nav, footer, cookie banners, and boilerplate.
-
-   ---
-
-   **Mode 1 — Bootstrap** (`--bootstrap` flag, run once manually before daily monitoring begins)
-
-   - Parse `sitemap.xml`; spider from homepage as fallback to catch any unlisted pages
-   - Extract clean body text from each page
-   - Compare URL inventory against what is already in the corpus (by source URL metadata in Pinecone)
-   - Output: any page not yet represented in the corpus → drop to staging for governance review (same format as monitor mode, see below)
-   - Build initial state store from this crawl so Day 1 monitoring has a clean baseline
-
-   ---
-
-   **Mode 2 — Monitor** (daily, called by orchestrator)
-
-   - Crawl full URL inventory (sitemap + any new pages discovered since last run)
-   - Hash each page's extracted content; compare against state store
-   - For any page whose hash has changed: pass old text + new text diff to Haiku with a classifier prompt — "Does this change affect product claims, technical specifications, application guidance, or regulatory content? Reply yes/no and one sentence rationale."
-   - If Haiku says **yes**: trigger both outputs (staging drop + email)
-   - If Haiku says **no**: update hash in state store silently — do not trigger outputs
-   - Update state store on every run regardless of Haiku decision (prevents non-substantive changes from re-triggering on the next daily run)
-   - No change detected: update `last_checked` timestamp, log a no-change heartbeat entry
-
-   ---
-
-   **State store** — `logs/synexis_web_state.json`
-
-   ```json
-   {
-     "https://synexis.com/products/": {
-       "hash": "abc123",
-       "last_checked": "2026-04-21T00:00:00Z",
-       "last_changed": "2026-04-21T00:00:00Z",
-       "title": "Products | Synexis"
-     }
-   }
-   ```
-
-   ---
-
-   **Output A — Staging drop** — `pipeline/monitoring/staging/synexis_web/YYYY-MM-DD/`
-
-   Two files per changed page:
-   - `{slug}.txt` — extracted page text
-   - `{slug}.meta.json` — URL, page title, Haiku change summary (one sentence), `detected_at` timestamp
-
-   Content is held in staging pending governance review before corpus ingest. Same governance-gated pattern as all other content — nothing auto-ingests.
-
-   ---
-
-   **Output B — Email notification**
-
-   - To: Michael (mmcclung@synexis.com) — add marketing@synexis.com as a later config option
-   - Subject: `Synexis.com changes detected — N pages [YYYY-MM-DD]`
-   - Body: one line per changed page — URL + Haiku's one-sentence rationale
-   - No new substantive changes → no email sent
-
-   Use the shared email utility (see orchestrator item above — `pipeline/monitoring/utils.py`). Both feeds need email; build it once there.
-
-   ---
-
-   **Modes summary:**
-   - `--bootstrap`: full crawl, corpus gap check, staging drop for unrepresented pages, builds state store; no daily outputs
-   - Dry-run (default): prints diff summary, Haiku verdicts, and would-be output files — no writes, no email
-   - `--confirm`: full monitor run with staging drop, state store update, and email
-
-### Tier 2 — Feed 2: Outbreak monitor (implement after Feed 1)
+### Feed 2: Outbreak monitor
 
 3. **Feed 2 — Outbreak monitor** — `pipeline/monitoring/feed_outbreaks.py`
 
