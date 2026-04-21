@@ -44,6 +44,145 @@ report lag on long histories.
 3. **Feedback UI — selected state persists after rating click** ✅
 4. **Scroll behavior on new answer** ✅ — `scrollIntoView({ behavior: "smooth", block: "start" })`
 
+## Current Batch — OCR Remediation [COMPLETE]
+
+Completed April 21, 2026. Pinecone count: 5,117 → 5,638 (521 new chunks). Regression 18/18.
+See Retrieval Tuning → OCR Remediation for full spec.
+
+Bonus fix: `input_validator.py` VALIDATOR_SYSTEM_PROMPT tightened — company-level questions
+(revenue, leadership, history, acquisitions) now explicitly on_topic so rule 4 handles them
+downstream rather than the validator blocking them. Caught on eval #15 during regression.
+
+Quality caveats (not batched):
+- Patent data-tables flatten into space-separated number streams — same pdfplumber failure pattern
+  as the Application Guide. Dense retrieval still surfaces chunks topically; LLM can't reliably
+  read the numbers. Future fix: Claude vision on specific pages with layout-heavy tables.
+- Postobon pptx still corrupt — needs re-save from source, not OCR. Still open.
+
+Retrieval smoke test passed: "Can DHP be used to control arthropods like mites and lice?" →
+top-5 citations on US12102063 pp. 52–57 (poultry patent, arthropod control). OCR'd pages
+are reaching retrieval.
+
+---
+
+## Next Batch — Monitoring Orchestrator + Feeds 1 & 2
+
+Implement in order. Full specs below. Do not implement anything marked [DEFERRED] or [POST-BETA].
+
+### Tier 1 — Feed 1: synexis.com monitor (implement first)
+
+1. **Monitoring orchestrator skeleton** — new directory `pipeline/monitoring/`. Single entry point `orchestrator.py` that runs each active feed module in sequence on a configurable schedule. Shared output interface: drop files to `source_content/` with `pending-governance` status + structured notification log at `logs/monitoring.jsonl`. Also create `pipeline/monitoring/utils.py` with a shared email utility — both Feed 1 and Feed 2 need email notification; build it once here so feeds can import it.
+
+2. **Feed 1 — synexis.com change monitor** — `pipeline/monitoring/feed_synexis_web.py`
+
+   **What it does:** Two modes — a one-time bootstrap pass to ensure full corpus coverage, then daily monitoring of the whole site for substantive content changes.
+
+   **Content extractor note:** synexis.com is server-rendered HTML — `requests` + `BeautifulSoup` is sufficient. No Playwright needed. Extract visible body text only; strip nav, footer, cookie banners, and boilerplate.
+
+   ---
+
+   **Mode 1 — Bootstrap** (`--bootstrap` flag, run once manually before daily monitoring begins)
+
+   - Parse `sitemap.xml`; spider from homepage as fallback to catch any unlisted pages
+   - Extract clean body text from each page
+   - Compare URL inventory against what is already in the corpus (by source URL metadata in Pinecone)
+   - Output: any page not yet represented in the corpus → drop to staging for governance review (same format as monitor mode, see below)
+   - Build initial state store from this crawl so Day 1 monitoring has a clean baseline
+
+   ---
+
+   **Mode 2 — Monitor** (daily, called by orchestrator)
+
+   - Crawl full URL inventory (sitemap + any new pages discovered since last run)
+   - Hash each page's extracted content; compare against state store
+   - For any page whose hash has changed: pass old text + new text diff to Haiku with a classifier prompt — "Does this change affect product claims, technical specifications, application guidance, or regulatory content? Reply yes/no and one sentence rationale."
+   - If Haiku says **yes**: trigger both outputs (staging drop + email)
+   - If Haiku says **no**: update hash in state store silently — do not trigger outputs
+   - Update state store on every run regardless of Haiku decision (prevents non-substantive changes from re-triggering on the next daily run)
+   - No change detected: update `last_checked` timestamp, log a no-change heartbeat entry
+
+   ---
+
+   **State store** — `logs/synexis_web_state.json`
+
+   ```json
+   {
+     "https://synexis.com/products/": {
+       "hash": "abc123",
+       "last_checked": "2026-04-21T00:00:00Z",
+       "last_changed": "2026-04-21T00:00:00Z",
+       "title": "Products | Synexis"
+     }
+   }
+   ```
+
+   ---
+
+   **Output A — Staging drop** — `pipeline/monitoring/staging/synexis_web/YYYY-MM-DD/`
+
+   Two files per changed page:
+   - `{slug}.txt` — extracted page text
+   - `{slug}.meta.json` — URL, page title, Haiku change summary (one sentence), `detected_at` timestamp
+
+   Content is held in staging pending governance review before corpus ingest. Same governance-gated pattern as all other content — nothing auto-ingests.
+
+   ---
+
+   **Output B — Email notification**
+
+   - To: Michael (mmcclung@synexis.com) — add marketing@synexis.com as a later config option
+   - Subject: `Synexis.com changes detected — N pages [YYYY-MM-DD]`
+   - Body: one line per changed page — URL + Haiku's one-sentence rationale
+   - No new substantive changes → no email sent
+
+   Use the shared email utility (see orchestrator item above — `pipeline/monitoring/utils.py`). Both feeds need email; build it once there.
+
+   ---
+
+   **Modes summary:**
+   - `--bootstrap`: full crawl, corpus gap check, staging drop for unrepresented pages, builds state store; no daily outputs
+   - Dry-run (default): prints diff summary, Haiku verdicts, and would-be output files — no writes, no email
+   - `--confirm`: full monitor run with staging drop, state store update, and email
+
+### Tier 2 — Feed 2: Outbreak monitor (implement after Feed 1)
+
+3. **Feed 2 — Outbreak monitor** — `pipeline/monitoring/feed_outbreaks.py`
+
+   **Sources:**
+   - ProMED RSS feed (`https://promedmail.org/feed/`) — primary; fast, global, covers HAI + food safety
+   - FDA outbreak investigations page (`https://www.fda.gov/food/outbreaks-foodborne-illness/investigations-foodborne-illness-outbreaks`) — secondary; authoritative, structured, food/healthcare focus
+
+   **Per-item pipeline:**
+   1. Fetch new items since last run (store last-seen IDs in `pipeline/monitoring/state/outbreaks_state.json`)
+   2. For each new item: Haiku API call to extract structured fields — `pathogen`, `affected_vertical` (healthcare / food processing / poultry / other), `geography` (list of US states + optionally metro areas), `severity` (outbreak / investigation / advisory), `summary` (2–3 sentence plain English), `source_url`
+   3. Skip items where `affected_vertical` is not relevant to Synexis markets or geography is non-US (unless significant)
+
+   **Three outputs per qualifying item:**
+
+   **Output A — HubSpot tasks:**
+   - Two-pass company matching:
+     - Pass 1: named company in ProMED/FDA item → search HubSpot companies by name
+     - Pass 2: no named company → query HubSpot companies where `state` is in `geography` AND `industry` matches `affected_vertical`
+   - For each matched company: get contacts + contact owner → create HubSpot task assigned to owner
+   - Task subject: `[Outbreak Alert] {pathogen} — {geography}`
+   - Task body: pathogen, affected area, severity, suggested talking point ("DHP has demonstrated X% efficacy against {pathogen} — timely reason to reach out"), source link
+   - No HubSpot match → no HubSpot action; continue to outputs B and C regardless
+
+   **Output B — Corpus:**
+   - Write outbreak summary (structured markdown) to `source_content/Outbreak Intelligence/YYYY-MM-DD_{pathogen}_{state}.md` with `pending-governance` status
+   - Governance owner reviews before ingest — same pipeline as all other content
+
+   **Output C — Marketing email digest:**
+   - Accumulate qualifying items across the day's run
+   - At end of run: if any new items, send email digest to `marketing@synexis.com`
+   - Subject: `Outbreak Intelligence Digest — {date}`
+   - Body: one entry per outbreak — pathogen, geography, affected vertical, severity, suggested campaign angle, source link
+   - No new items → no email sent
+
+   **Dependencies:** `feedparser` (ProMED RSS), `requests` + `BeautifulSoup` (FDA scrape), HubSpot API (existing pattern from prior scripts), `smtplib` or SendGrid for email
+   **Dry-run mode (default):** prints parsed items + would-be HubSpot matches + email preview, no writes/API calls
+   **`--confirm`:** full run with all outputs
+
 ### Still open (not yet batched)
 
 - **Render load test** ④ — [BETA gate for Partner Beta]; run before external users onboard
@@ -152,6 +291,41 @@ After the dedup step removes chunks, citation numbers in the response body can b
 Impact: (1) chunk won't retrieve reliably on natural language maintenance schedule queries, (2) if it does retrieve, it provides garbled context that could produce wrong answers, (3) tooltip exposure is unprofessional.
 
 Fix: re-extract page 13 with table-aware parsing (pdfplumber or camelot) to recover row/column structure, then re-chunk as one row per chunk with column headers prepended (e.g. "Retail Stores — Filter: 6 months, Bulb: 24 months, ..."). Re-embed and upsert to replace the current broken chunks. Check adjacent pages of the same PDF for the same issue — tables in the Application Guide may be affected throughout.
+
+### OCR Remediation — 5 scanned PDFs
+
+Five PDFs in source_content return 0 characters per page on text extraction — they are image-based scans and must be OCR'd before they can be chunked and ingested.
+
+**Files requiring OCR (confirmed via PyMuPDF char-count audit):**
+
+| File | Path | Pages |
+|---|---|---|
+| US11751569.pdf | Customer Facing Training Documents/Patents/ | 18 |
+| US11980639.pdf | Customer Facing Training Documents/Patents/ | 26 |
+| US12102063.pdf | Customer Facing Training Documents/Patents/ | 69 |
+| US20230203676A1.pdf | Customer Facing Training Documents/Patents/ | 30 |
+| USDA Allowed Sanitizers for Food Contact Surfaces in Organic Spaces.pdf | Customer Facing Training Documents/Public Domain Materials ex OSHA EPA etc/ | 4 |
+
+**Total: 143 pages across 5 files.**
+
+**Implementation — `pipeline/ocr_remediate.py` (new script):**
+
+1. For each target file: convert pages to images using `pdf2image` (poppler backend)
+2. Run `pytesseract` OCR on each page image — use `--psm 3` (fully automatic page segmentation) for patents, `--psm 6` for the USDA doc (uniform text block)
+3. Reassemble per-page text into a single document string with page boundary markers
+4. Feed through the existing chunker (`pipeline/chunk.py`) with correct `source`, `document_type`, and `content_category` metadata — patents are Tier 1 (Authoritative Citation Material)
+5. Delete existing (empty/garbled) chunks for these files from Pinecone first: `index.delete(filter={"source": {"$eq": relative_file_path}})`
+6. Upsert new OCR'd chunks via the standard embed + upsert pipeline
+
+**Script modes:**
+- Dry run (default): prints page count, sample OCR output for first page of each file, estimated chunk count — no Pinecone writes
+- `--confirm`: runs full OCR, deletes old chunks, upserts new chunks, logs to `logs/ocr_remediation.jsonl`
+
+**Dependencies:** `pdf2image`, `pytesseract`, poppler (system package). Add to `requirements.txt`.
+
+**Quality note:** Patent scans from USPTO are typically clean enough for Tesseract. If OCR quality on any file is poor (visible in dry-run output), flag it — Claude vision is the fallback for problem pages.
+
+---
 
 ### Retrieval miss: equipment material compatibility queries [FIXED]
 Query "how does it do on various equipment materials (stainless steel, belts, plastics)" returned 0 relevant chunks despite the corpus containing applicable content — SDS non-corrosive data, device construction materials from device manuals (18-gauge stainless steel housing, ABS/polycarbonate, metal mesh catalyst components). The same corpus correctly answered the metals question ("will DHP react with any metals?"), so the chunks exist. The issue is semantic distance between "equipment materials" and the relevant chunk content. Possible fixes: (1) add "material compatibility" as a BM25-boosted keyword cluster in the hybrid retrieval config, (2) add a query expansion step that maps material-type queries to SDS + device manual source filters, or (3) ensure device manual chunks include equipment material compatibility as explicit metadata tags for filtered retrieval.

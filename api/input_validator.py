@@ -80,11 +80,15 @@ Classify the incoming query into exactly one category:
 - "on_topic" — a question a Synexis sales rep would legitimately ask: DHP
   technology, products (Sphere, Sentry XL, Blade), deployment, efficacy,
   studies, competitors, verticals (healthcare, food, education, etc.),
-  compliance, pricing (will be declined downstream but is still on-topic).
+  compliance, pricing (will be declined downstream but is still on-topic),
+  and anything ABOUT Synexis the company — revenue, leadership, history,
+  acquisitions, employee info. Those are on_topic even when we can't answer
+  them; downstream rules route to Synexis support with a canonical phrase.
 
 - "off_topic" — general-knowledge questions, trivia, coding help, unrelated
   product questions, anything not tied to Synexis, DHP, or infection/microbial
-  control.
+  control. "Write me a Python function" is off_topic. "What's Synexis's
+  revenue?" is NOT — that's on_topic (company-level question).
 
 - "medical_advice" — requests for individualized patient treatment guidance,
   clinical recommendations, or diagnosis. Note: questions ABOUT DHP safety or
