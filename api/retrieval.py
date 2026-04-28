@@ -104,6 +104,7 @@ class Retriever:
         self._voyage = None
         self._pc_index = None
         self._bm25: Optional[BM25Okapi] = None
+        self._bm25_disabled: bool = False   # True when corpus file absent — dense-only mode
         self._corpus: List[dict] = []
         # Populated by retrieve() on every call with per-step wall-clock timings.
         # Profiling (CODE_BRIEFING Latency ①) reads this via getattr(r, "last_timings").
@@ -125,13 +126,16 @@ class Retriever:
             self._pc_index = pc.Index(PINECONE_INDEX_NAME)
 
     def _ensure_bm25(self) -> None:
-        if self._bm25 is not None:
+        if self._bm25 is not None or self._bm25_disabled:
             return
         if not self._chunks_path.exists():
-            raise RuntimeError(
-                f"BM25 corpus file not found at {self._chunks_path}. "
-                "Run the ingest pipeline (pipeline.chunk) or ship chunks.jsonl with the deploy."
+            import logging
+            logging.getLogger(__name__).warning(
+                "BM25 corpus not found at %s — running dense-only retrieval.",
+                self._chunks_path,
             )
+            self._bm25_disabled = True
+            return
         corpus: List[dict] = []
         tokenized: List[List[str]] = []
         with self._chunks_path.open(encoding="utf-8") as f:
@@ -175,6 +179,8 @@ class Retriever:
 
     def _sparse_search(self, query: str, top_k: int) -> List[Hit]:
         self._ensure_bm25()
+        if self._bm25_disabled or self._bm25 is None:
+            return []
         q_tokens = _tokenize(query)
         if not q_tokens:
             return []
