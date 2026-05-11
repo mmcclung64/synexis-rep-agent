@@ -4,6 +4,47 @@ Ongoing notes and refinements from live testing. Share with Code at appropriate 
 
 ---
 
+## Current Batch — Latency Improvements [COMPLETE — May 11, 2026]
+
+No-cost latency improvements implemented while waiting on Azure App Registration.
+
+### Changes [ALL DONE ✅]
+
+1. **Rewriter prompt tightened** ✅ — `api/rewriter.py`
+   - System prompt reduced from ~300 tokens to ~150 tokens (same rules, tighter wording)
+   - Removed redundant trailing instruction from `_format_rewriter_input()` (duplicated system prompt)
+   - `REWRITER_MAX_TOKENS` reduced from 256 → 120 (rewritten queries are never that long; saves output generation time)
+   - Expected: shaves 100–200ms off rewriter per call; system prompt is already cache-controlled so cached after first call
+
+2. **Session-level response cache** ✅ — `api/main.py`
+   - `_SessionCache` class: in-memory dict, TTL = 30 minutes, keyed on `(session_id, normalised_query)`
+   - Wired into both streaming and non-streaming `/query` paths
+   - Cache hits log as `query.cache_hit` in `queries.jsonl` for observability
+   - Streaming cache hit emits a single `{"type": "final", ...}` NDJSON event so the extension's stream reader handles it identically to a live response
+   - `POST /cache/clear` endpoint added — returns `{"ok": true, "entries_cleared": N}` — call this from the ingest pipeline after any Pinecone upsert/delete to bust stale answers
+   - Eviction: expired entries are pruned on each `set()` call (no background thread required at beta volumes)
+   - Scope is deliberately per-session only — cross-session caching avoided to prevent stale answers after corpus updates
+
+3. **Render cold-start eliminated** ✅ — UptimeRobot
+   - Free UptimeRobot account created; HTTP monitor pointed at `https://synexis-rep-agent.onrender.com/health`, 5-minute interval
+   - Confirmed cold-start was 10s on Render Starter tier (measured via `/health` round-trip before monitor was active)
+   - With 5-minute pings, instance stays warm and cold-start latency drops to ~0
+
+4. **Load test script** ✅ — `work/load_test.py`
+   - Sends N parallel `/query` requests (default: 10 workers, one unique session each)
+   - Reports p50, p95, p99, min, max, wall-clock total, and success/error counts
+   - Compares p95 to single-query baseline and flags if >20% spike (Render tier upgrade signal)
+   - Run locally: `python work/load_test.py --workers 10`
+   - With a partner key: `python work/load_test.py --workers 10 --key YOUR_KEY`
+   - **Still pending**: run the actual concurrent test and record baseline numbers before Partner Beta (item ④)
+
+### Still open (not yet batched)
+
+- **Render load test numbers** — run `python work/load_test.py --workers 10` from your machine and record p95 before Partner Beta
+- **`POST /cache/clear` wiring** — call from `embed_load.py` after any Pinecone upsert/delete so cache stays coherent with corpus changes
+
+---
+
 ## Current Batch — April 20, 2026 [COMPLETE]
 
 All items complete except #10 (Haiku validator — no existing classifier to swap; see Next Batch).
@@ -94,6 +135,24 @@ Key implementation notes:
 ### Still open (not yet batched)
 
 - **Render load test** ④ — [BETA gate for Partner Beta]; run before external users onboard
+
+---
+
+## Current Batch — Extension UX v0.1.1 [COMPLETE — May 11, 2026]
+
+Submitted to Chrome Web Store May 11, 2026. Version bump 0.1.0 → 0.1.1.
+
+### Changes [ALL DONE ✅]
+
+1. **User query bubble** ✅ — Queries now render as right-aligned chat bubbles (`width: fit-content`, `margin-left: auto`, `border-radius: 16px 16px 4px 16px`). Removes bold treatment; uses `font-weight: 500`.
+
+2. **Bubble colors — brand-matched** ✅ — Background `#ebf8fa`, text `#002e6d`. Colors confirmed against live synexis.com (brand navy `#002e6d` used on CTA buttons and footer; brand teal `#5fd0e0` used on nav submenus and feature cards).
+
+3. **Return-to-send toggle** ✅ — Checkbox in Settings panel: "Return sends message (Shift+Enter for new line)". Defaults to **on** (`returnToSend !== false` — existing installs with no stored pref get on). Shift+Enter always inserts a newline regardless. Placeholder text updates dynamically: "Ask a question… (Shift+Enter for new line)" when on, "(Cmd/Ctrl+Enter to send)" when off. Saved to `chrome.storage.local` with other settings.
+
+4. **Brand color standardization** ✅ — All navy instances updated from `#0F2D69` / `#102d69` to `#002e6d` (confirmed from synexis.com). Affected: citation badge background/hover, table header background, active feedback button, `.cite .n` sources list numbers, user bubble text.
+
+5. **Citation badge treatment** ✅ — Navy (`#002e6d`) background with light teal (`#ebf8fa`) text at rest. Hover: same navy background, full teal (`#5fd0e0`) text. Matches user bubble palette. `.cite .n` in sources list uses `#002e6d`.
 
 ---
 
@@ -466,10 +525,10 @@ Hover tooltips on inline citation badges are clipping at the left edge of the pa
 ### Citation display — inline superscript badges with hover tooltips
 Currently citations render as `[N]` inline markers with a flat sources list at the bottom. The target UX (observed in Copilot bot) is: inline superscript number badges (styled circles) with a hover tooltip showing a short snippet of the source text. The full sources list can remain at the bottom, but the inline markers should be visually distinct and interactive. This is a CSS/JS change in sidebar.html and sidebar.js — no API changes required. The API should also return a `snippet` field per citation (first ~150 chars of the chunk text) to populate the tooltip.
 
-### Citation badge visual weight — reduce prominence, apply brand color
+### Citation badge visual weight — reduce prominence, apply brand color [FIXED v0.1.1]
 Current badge styling is too visually prominent — the badges compete with the response text rather than supporting it. Target: support element, not focal point. Changes: (1) reduce badge size slightly (font-size and circle diameter one step down from current), (2) replace current background color with Synexis brand navy `#0F2D69`. The dark navy limits brightness and avoids the eye-catching contrast of the current color while maintaining legibility. White text on `#0F2D69` passes WCAG AA. Copilot's treatment is too subtle in the other direction — this should land between the two.
 
-### Sources list — match citation number color to badge color
+### Sources list — match citation number color to badge color [FIXED v0.1.1]
 The numbered citation markers in the sources list at the bottom of the response should use the same `#0F2D69` color as the inline superscript badges. This creates a unified citation system where the inline reference and the corresponding source entry are visually connected. Apply `color: #0F2D69` (or the equivalent styled class) to the number/index portion of each source list item.
 
 ---

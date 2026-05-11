@@ -25,7 +25,7 @@ load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 REWRITER_MODEL = os.getenv("ANTHROPIC_REWRITER_MODEL", "claude-haiku-4-5")
-REWRITER_MAX_TOKENS = int(os.getenv("REWRITER_MAX_TOKENS", "256"))
+REWRITER_MAX_TOKENS = int(os.getenv("REWRITER_MAX_TOKENS", "120"))
 REWRITER_MIN_HISTORY = int(os.getenv("REWRITER_MIN_HISTORY", "2"))  # min sanitized messages to trigger rewrite
 REWRITER_MAX_HISTORY_TURNS = 4    # last N turns we hand to the rewriter
 ASSISTANT_TURN_CLIP_CHARS = 600   # truncate long assistant turns to keep rewriter cost down
@@ -33,16 +33,14 @@ REWRITER_MIN_OUTPUT_CHARS = 5     # shorter output is treated as empty/failed
 
 
 REWRITER_SYSTEM_PROMPT = """\
-You are a query rewriter for a Synexis Dry Hydrogen Peroxide (DHP) knowledge base.
+Rewrite the user's latest question into a standalone retrieval query for a Synexis DHP knowledge base.
 
-Given the conversation history and a new user question, produce a single standalone query that:
-1. Resolves pronouns, ellipsis, and context references ("what about there?", "does it work with that?", "What about the door?") using the prior turns, so the query stands alone without the conversation.
-2. Normalizes non-standard terminology to canonical industry terms. Examples: "walking cooler" → "walk-in cooler"; "hatchery" alone → "poultry hatchery" when the conversation is about poultry; "caustic" → "caustic cleaning agents"; "the bot" → "Synexis device".
-3. Preserves the user's specific intent. Do not broaden the question, add new topics, or speculate about what they meant.
+Rules:
+1. Resolve pronouns and context references using prior turns ("what about there?" → full specific context; "What about the door?" → "walk-in cooler door deployment").
+2. Normalize terminology: "walking cooler"→"walk-in cooler", "hatchery"→"poultry hatchery" (in poultry context), "caustic"→"caustic cleaning agents", "the bot"→"Synexis device".
+3. Preserve exact intent — do not broaden, add topics, or speculate.
 
-Output ONLY the rewritten query on a single line. No preamble, no explanation, no quotation marks, no markdown.
-
-If the latest question is already fully self-contained (no pronouns, no context references, standard terminology), output it unchanged."""
+Output ONLY the rewritten query on one line. No quotes, no markdown, no explanation. If already self-contained, output unchanged."""
 
 
 @dataclass
@@ -83,8 +81,6 @@ def _format_rewriter_input(history: List[dict], query: str) -> str:
         lines.append(f"{role}: {t['content']}")
     lines.append("")
     lines.append(f"Latest user question: {query}")
-    lines.append("")
-    lines.append("Rewrite the latest user question per the rules. Output only the rewritten query.")
     return "\n".join(lines)
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -46,6 +47,66 @@ from api.validators import (
 
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+_WS_RE = re.compile(r"\s+")
+
+# ---------------------------------------------------------------------------
+# Session-level response cache
+# ---------------------------------------------------------------------------
+# Keyed on (session_id, normalised_query). TTL = 30 minutes.
+# Scope is deliberately per-session: a 30-minute window is short enough that
+# corpus updates between sessions are not a concern, and the same rep
+# re-running the same question in a session (common during alpha testing)
+# gets an instant response. Cross-session caching is intentionally avoided
+# so stale answers don't persist after a corpus ingest.
+#
+# Cache is busted globally by POST /cache/clear (called by the ingest
+# pipeline after any Pinecone upsert or delete).
+# ---------------------------------------------------------------------------
+
+class _SessionCache:
+    TTL = 30 * 60  # seconds
+
+    def __init__(self) -> None:
+        self._store: dict[tuple, tuple[float, dict]] = {}
+
+    @staticmethod
+    def _norm(query: str) -> str:
+        return _WS_RE.sub(" ", (query or "").strip().lower())
+
+    def _key(self, session_id: str, query: str) -> tuple:
+        return (session_id or "", self._norm(query))
+
+    def get(self, session_id: str, query: str) -> "dict | None":
+        key = self._key(session_id, query)
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        ts, result = entry
+        if time.time() - ts > self.TTL:
+            del self._store[key]
+            return None
+        return result
+
+    def set(self, session_id: str, query: str, result: dict) -> None:
+        self._evict_expired()
+        self._store[self._key(session_id, query)] = (time.time(), result)
+
+    def clear(self) -> int:
+        n = len(self._store)
+        self._store.clear()
+        return n
+
+    def _evict_expired(self) -> None:
+        now = time.time()
+        stale = [k for k, (ts, _) in self._store.items() if now - ts > self.TTL]
+        for k in stale:
+            del self._store[k]
+
+
+# Set ENABLE_SESSION_CACHE=false on Render to disable without a redeploy.
+_CACHE_ENABLED = os.getenv("ENABLE_SESSION_CACHE", "true").lower() not in ("false", "0", "no")
+_cache = _SessionCache()
 
 
 app = FastAPI(title="Synexis Rep Agent", version="0.1.0")
@@ -235,10 +296,43 @@ async def query(
             rewrite=None,
         )
 
+    # Session cache check — only on first turns (no history) or short history
+    # where stale context is unlikely. Rejected queries are never cached (handled
+    # above). Cache key: (session_id, normalised query).
+    cached = _cache.get(body.session_id or "", body.query) if _CACHE_ENABLED else None
+    if cached is not None:
+        log_event(
+            "query.cache_hit",
+            partner_key=partner_key,
+            session_id=body.session_id,
+            turn_id=body.turn_id,
+            user=body.user,
+        )
+        elapsed_ms = int((time.time() - started) * 1000)
+        rewrite = cached.get("rewrite") or {}
+        if _wants_stream(request):
+            def _cache_stream():
+                final = {"type": "final", **cached, "timing": {**(cached.get("timing") or {}), "total_ms": elapsed_ms}}
+                yield (json.dumps(final, default=str, ensure_ascii=False) + "\n").encode("utf-8")
+            return StreamingResponse(
+                _cache_stream(),
+                media_type="application/x-ndjson",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return QueryResponse(
+            answer=cached["answer"],
+            citations=cached["citations"],
+            query_time_ms=elapsed_ms,
+            history_turns_used=cached.get("history_turns_used", 0),
+            context_utilization=cached.get("context_utilization"),
+            rewrite=QueryRewriteInfo(**rewrite) if rewrite else None,
+        )
+
     # Streaming path — client asked for NDJSON deltas.
     if _wants_stream(request):
         return StreamingResponse(
-            _stream_query(body, partner_key, history_payload, started, validation.elapsed_ms),
+            _stream_query(body, partner_key, history_payload, started, validation.elapsed_ms,
+                          session_id=body.session_id or ""),
             media_type="application/x-ndjson",
             # Discourage buffering at intermediate proxies so the client sees
             # the first delta immediately rather than after the whole stream.
@@ -266,6 +360,10 @@ async def query(
     elapsed_ms = int((time.time() - started) * 1000)
     rewrite = result.get("rewrite") or {}
 
+    # Store in session cache for repeat queries within this session.
+    if _CACHE_ENABLED:
+        _cache.set(body.session_id or "", body.query, result)
+
     return QueryResponse(
         answer=result["answer"],
         citations=result["citations"],
@@ -282,6 +380,7 @@ def _stream_query(
     history_payload,
     started: float,
     input_validation_ms: int = 0,
+    session_id: str = "",
 ):
     """Generator that yields NDJSON lines for the streaming /query path."""
     final_payload: dict = {}
@@ -324,6 +423,9 @@ def _stream_query(
     if final_payload:
         _log_query_completion(body, partner_key, final_payload, started,
                               input_validation_ms=input_validation_ms)
+        # Store in session cache so a repeat query in the same session is instant.
+        if _CACHE_ENABLED:
+            _cache.set(session_id or body.session_id or "", body.query, final_payload)
 
 
 @app.post("/feedback", response_model=FeedbackResponse)
@@ -356,6 +458,18 @@ async def feedback(
         partner_key=partner_key,
     )
     return FeedbackResponse(ok=True)
+
+
+@app.post("/cache/clear")
+async def cache_clear(
+    partner_key: str = Depends(require_partner_key),
+) -> dict:
+    """Bust the session cache. Called by the ingest pipeline after any Pinecone
+    upsert or delete so reps don't receive stale cached answers post-update.
+    Returns the number of entries cleared."""
+    n = _cache.clear()
+    log_event("cache.cleared", partner_key=partner_key, entries_cleared=n)
+    return {"ok": True, "entries_cleared": n}
 
 
 # Browser-based UI for testing and demos. Mounted last so /health and /query
