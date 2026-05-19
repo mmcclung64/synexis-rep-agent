@@ -779,21 +779,21 @@ def forget_file(sp_item_id: str, source_path: str | None, skip_hubspot: bool = F
     except Exception as exc:
         log.error("Pinecone delete failed for %s: %s", sp_item_id, exc)
 
-    # Remove HubSpot Documents link from registry
+    # Remove HubSpot Files entry from registry
     hubspot_removed = False
     if not skip_hubspot:
         registry = _load_hubspot_registry()
         if sp_item_id in registry:
             doc_entry = registry.pop(sp_item_id)
             _save_hubspot_registry(registry)
-            hubspot_doc_id = doc_entry.get("hubspot_doc_id")
-            if hubspot_doc_id:
+            hs_file_id = doc_entry.get("hs_file_id")
+            if hs_file_id:
                 try:
-                    _delete_hubspot_doc(hubspot_doc_id)
+                    _delete_hubspot_file(hs_file_id)
                     hubspot_removed = True
-                    log.info("HubSpot Document %s deleted", hubspot_doc_id)
+                    log.info("HubSpot file %s deleted", hs_file_id)
                 except Exception as exc:
-                    log.error("HubSpot delete failed for doc %s: %s", hubspot_doc_id, exc)
+                    log.error("HubSpot file delete failed for %s: %s", hs_file_id, exc)
 
     # Clear API response cache
     _clear_api_cache()
@@ -819,88 +819,67 @@ def _save_hubspot_registry(registry: dict) -> None:
 
 
 def _ensure_hubspot_doc(sp_item_id: str, item_name: str, drive_id: str, doc_id: str) -> str:
-    """Return a HubSpot Documents share URL for a SharePoint file.
+    """Upload a SharePoint file to HubSpot File Manager and return its public URL.
 
-    Checks the registry first. If not present, downloads the file, uploads it to
-    HubSpot Documents, stores the result in the registry, and returns the share URL.
-
-    NOTE: HubSpot Sales Hub Documents API endpoint needs verification.
-    See: https://developers.hubspot.com/docs/api/crm/documents
-    This implementation targets the v3 Files API for upload + a Documents API
-    for creating the trackable link. Adjust if the endpoint differs.
+    Checks the registry first to avoid duplicate uploads. Files are uploaded as
+    PUBLIC_NOT_INDEXABLE — accessible via link, not indexed by search engines.
+    This gives reps a reliable hubspotusercontent.com URL that clears corporate
+    firewalls without requiring HubSpot Sales Hub Documents.
     """
     registry = _load_hubspot_registry()
     if sp_item_id in registry:
         return registry[sp_item_id].get("share_url", "")
 
-    # Download file to temp
+    # Download file from SharePoint to temp dir, then upload to HubSpot
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_file = Path(tmp_dir) / item_name
         _download_item(drive_id, sp_item_id, tmp_file)
 
-        # Upload to HubSpot File Manager
-        upload_url = "https://api.hubapi.com/files/v3/files"
         with tmp_file.open("rb") as fh:
             upload_resp = requests.post(
-                upload_url,
+                "https://api.hubapi.com/files/v3/files",
                 headers={"Authorization": f"Bearer {HUBSPOT_ACCESS_TOKEN}"},
                 files={"file": (item_name, fh)},
                 data={
                     "folderPath": "/Rep Agent Content",
-                    "options": json.dumps({"access": "PRIVATE"}),
+                    "options": json.dumps({
+                        "access": "PUBLIC_NOT_INDEXABLE",
+                        "duplicateValidationStrategy": "RETURN_EXISTING",
+                        "duplicateValidationScope": "ENTIRE_PORTAL",
+                    }),
                 },
                 timeout=120,
             )
-        if not upload_resp.ok:
-            log.error("HubSpot file upload failed: %s %s", upload_resp.status_code, upload_resp.text[:300])
-            return ""
-        file_data = upload_resp.json()
-        hs_file_id = file_data.get("id")
-        if not hs_file_id:
-            log.error("HubSpot upload returned no file id: %s", file_data)
-            return ""
 
-    # Create HubSpot Document (trackable link) from the uploaded file
-    # TODO: Verify exact endpoint — may be /sales-platform/v1/documents or similar
-    doc_create_url = "https://api.hubapi.com/sales-platform/v1/documents"
-    doc_payload = {
-        "title": item_name.rsplit(".", 1)[0],
-        "fileId": hs_file_id,
-    }
-    doc_resp = requests.post(
-        doc_create_url,
-        headers={
-            "Authorization": f"Bearer {HUBSPOT_ACCESS_TOKEN}",
-            "Content-Type": "application/json",
-        },
-        json=doc_payload,
-        timeout=30,
-    )
-    if not doc_resp.ok:
-        log.error("HubSpot Document create failed: %s %s", doc_resp.status_code, doc_resp.text[:300])
-        # Fall back to direct file URL if Documents API isn't available
+    if not upload_resp.ok:
+        log.error("HubSpot file upload failed: %s %s", upload_resp.status_code, upload_resp.text[:300])
         return ""
 
-    doc_data = doc_resp.json()
-    hubspot_doc_id = doc_data.get("id", "")
-    share_url = doc_data.get("url") or doc_data.get("shareUrl") or doc_data.get("publicUrl") or ""
+    file_data = upload_resp.json()
+    hs_file_id = file_data.get("id")
+    share_url = file_data.get("defaultHostingUrl") or file_data.get("url") or ""
+
+    if not hs_file_id:
+        log.error("HubSpot upload returned no file id: %s", file_data)
+        return ""
+
+    log.info("HubSpot file uploaded: id=%s url=%s", hs_file_id, share_url)
 
     # Persist to registry
     registry = _load_hubspot_registry()
     registry[sp_item_id] = {
-        "hubspot_doc_id": hubspot_doc_id,
+        "hs_file_id": hs_file_id,
         "share_url": share_url,
         "title": item_name,
-        "hs_file_id": hs_file_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_hubspot_registry(registry)
     return share_url
 
 
-def _delete_hubspot_doc(hubspot_doc_id: str) -> None:
-    """Archive/delete a HubSpot Document by ID."""
-    url = f"https://api.hubapi.com/sales-platform/v1/documents/{hubspot_doc_id}"
+def _delete_hubspot_file(hs_file_id: str) -> None:
+    """Delete a file from HubSpot File Manager by file ID."""
+    url = f"https://api.hubapi.com/files/v3/files/{hs_file_id}"
     resp = requests.delete(
         url,
         headers={"Authorization": f"Bearer {HUBSPOT_ACCESS_TOKEN}"},
