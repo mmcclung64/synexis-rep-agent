@@ -249,73 +249,95 @@ def _subscription_expiry_dt() -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
 
 
-def register_subscription(folder: dict) -> dict:
-    """Register a new Graph change notification subscription on a folder.
+def register_subscription(drive_id: str, drive_alias: str) -> dict:
+    """Register a Graph change notification subscription on a drive root.
 
-    The resource URI covers the folder + all descendants recursively.
+    Graph supports subscriptions on drives/{drive-id}/root (not on individual
+    folder items). One subscription per drive covers all folders within it.
     Returns the raw Graph subscription object.
     """
-    drive_id = folder["drive_id"]
-    item_id = folder["item_id"]
-    resource = f"/drives/{drive_id}/items/{item_id}"
-
+    resource = f"drives/{drive_id}/root"
     payload = {
-        "changeType": "created,updated,deleted",
+        "changeType": "updated",
         "notificationUrl": GRAPH_NOTIFICATION_URL,
         "resource": resource,
         "expirationDateTime": _subscription_expiry_dt(),
-        "clientState": f"synexis-rep-agent:{folder['name']}",
+        "clientState": f"synexis-rep-agent:drive:{drive_alias}",
     }
-    log.info("Registering subscription for %s (%s)", folder["name"], resource)
+    log.info("Registering subscription for drive %s (%s)", drive_alias, resource)
     sub = _graph_post(f"{GRAPH_BASE}/subscriptions", payload)
-    log.info("Subscription %s registered, expires %s", sub["id"], sub["expirationDateTime"])
+    log.info("Subscription %s registered for drive %s, expires %s",
+             sub["id"], drive_alias, sub["expirationDateTime"])
     return sub
 
 
 def register_all_subscriptions(force: bool = False) -> dict[str, dict]:
-    """Register subscriptions for all confirmed watched folders.
+    """Register one Graph subscription per unique drive across all confirmed folders.
 
-    Skips folders that already have an active subscription (unless force=True).
-    Returns {folder_name: subscription_object}.
+    Graph only supports drive-root subscriptions (not per-folder), so we deduplicate
+    by drive_id and register once per drive. Keyed by drive alias in sp_subscriptions.json.
+    Returns {drive_alias: subscription_object}.
     """
     subs = _load_subscriptions()
-    folders = get_watched_folders()
+    config = load_config()
+    drive_ids = config["drive_ids"]  # alias → actual drive_id
+    folders = get_watched_folders(config)
     results = {}
 
+    # Collect unique drives needed by confirmed folders
+    needed_drives: dict[str, str] = {}  # alias → actual drive_id
     for folder in folders:
-        name = folder["name"]
-        if not force and name in subs:
-            log.info("Subscription already exists for %s (%s), skipping.", name, subs[name].get("id"))
-            results[name] = subs[name]
+        actual_drive_id = folder["drive_id"]
+        # Find alias for this drive_id
+        alias = next((k for k, v in drive_ids.items() if v == actual_drive_id), actual_drive_id)
+        needed_drives[alias] = actual_drive_id
+
+    for alias, actual_drive_id in needed_drives.items():
+        key = f"drive:{alias}"
+        if not force and key in subs:
+            log.info("Subscription already exists for drive %s (%s), skipping.",
+                     alias, subs[key].get("id"))
+            results[key] = subs[key]
             continue
         try:
-            sub = register_subscription(folder)
-            subs[name] = {
+            sub = register_subscription(actual_drive_id, alias)
+            subs[key] = {
                 "id": sub["id"],
                 "expiration_dt": sub["expirationDateTime"],
                 "resource": sub["resource"],
-                "drive_id": folder["drive_id"],
-                "item_id": folder["item_id"],
+                "drive_id": actual_drive_id,
+                "drive_alias": alias,
             }
-            results[name] = subs[name]
+            results[key] = subs[key]
         except Exception as exc:
-            log.error("Failed to register subscription for %s: %s", name, exc)
+            log.error("Failed to register subscription for drive %s: %s", alias, exc)
 
     _save_subscriptions(subs)
     return results
 
 
-def renew_subscription(folder_name: str, sub_id: str) -> str:
+def renew_subscription(key: str, sub_id: str) -> str:
     """Extend a subscription's expiration by patching it. Returns new expiration string."""
     new_expiry = _subscription_expiry_dt()
     _graph_patch(f"{GRAPH_BASE}/subscriptions/{sub_id}", {"expirationDateTime": new_expiry})
-    log.info("Renewed subscription %s for %s, new expiry: %s", sub_id, folder_name, new_expiry)
+    log.info("Renewed subscription %s for %s, new expiry: %s", sub_id, key, new_expiry)
     return new_expiry
 
 
 def renew_all_subscriptions() -> None:
-    """Renew all known subscriptions. Safe to call daily — Graph ignores early renewals."""
+    """Renew all known drive-level subscriptions. Safe to call daily."""
     subs = _load_subscriptions()
+    config = load_config()
+    drive_ids = config["drive_ids"]
+    folders = get_watched_folders(config)
+
+    # Collect unique drives still needed
+    needed_drives: dict[str, str] = {}
+    for folder in folders:
+        actual = folder["drive_id"]
+        alias = next((k for k, v in drive_ids.items() if v == actual), actual)
+        needed_drives[alias] = actual
+
     for name, sub in list(subs.items()):
         sub_id = sub.get("id")
         if not sub_id:
@@ -325,17 +347,19 @@ def renew_all_subscriptions() -> None:
             subs[name]["expiration_dt"] = new_expiry
         except Exception as exc:
             log.error("Failed to renew subscription %s for %s: %s", sub_id, name, exc)
-            # If subscription is gone (404), try to re-register
             if "404" in str(exc):
                 log.warning("Subscription %s not found — re-registering %s", sub_id, name)
-                folders = {f["name"]: f for f in get_watched_folders()}
-                if name in folders:
+                drive_alias = sub.get("drive_alias") or name.replace("drive:", "")
+                actual_drive_id = needed_drives.get(drive_alias)
+                if actual_drive_id:
                     try:
-                        sub = register_subscription(folders[name])
+                        new_sub = register_subscription(actual_drive_id, drive_alias)
                         subs[name] = {
-                            "id": sub["id"],
-                            "expiration_dt": sub["expirationDateTime"],
-                            "resource": sub["resource"],
+                            "id": new_sub["id"],
+                            "expiration_dt": new_sub["expirationDateTime"],
+                            "resource": new_sub["resource"],
+                            "drive_id": actual_drive_id,
+                            "drive_alias": drive_alias,
                         }
                     except Exception as exc2:
                         log.error("Re-registration failed for %s: %s", name, exc2)
@@ -447,25 +471,25 @@ def process_notification(payload: dict) -> None:
     """Handle a raw Graph change-notification payload.
 
     Called asynchronously by the FastAPI endpoint after the 202 response
-    has already been sent. Processes each notification value individually.
+    has already been sent.
+
+    Since Graph subscriptions are registered at the drive root level (one per
+    drive), notifications identify the drive via clientState. On receipt we run
+    delta sync for every watched folder belonging to that drive — delta already
+    tracks what changed since the last token, so this is safe and idempotent.
     """
     config = load_config()
-    drive_ids = config["drive_ids"]
-    # Build reverse map: drive_alias → actual drive_id
-    drive_id_by_alias = {v: k for k, v in drive_ids.items()}
-
-    folders_by_subscription: dict[str, dict] = {}
-    subs = _load_subscriptions()
-    for name, sub in subs.items():
-        sub_id = sub.get("id")
-        if sub_id:
-            folders_by_subscription[sub_id] = sub
-
+    drive_ids = config["drive_ids"]  # alias → actual drive_id
     folders = get_watched_folders(config)
-    folder_by_name = {f["name"]: f for f in folders}
+
+    # Build map: actual_drive_id → [folder, ...]
+    folders_by_drive: dict[str, list[dict]] = {}
+    for folder in folders:
+        folders_by_drive.setdefault(folder["drive_id"], []).append(folder)
+
+    seen_drives: set[str] = set()
 
     for notification in payload.get("value", []):
-        sub_id = notification.get("subscriptionId")
         client_state = notification.get("clientState", "")
 
         # Validate clientState to reject spoofed notifications
@@ -473,50 +497,29 @@ def process_notification(payload: dict) -> None:
             log.warning("Notification with unexpected clientState: %s — ignored", client_state)
             continue
 
-        folder_name = client_state.replace("synexis-rep-agent:", "")
-        folder = folder_by_name.get(folder_name)
-        if not folder:
-            log.warning("No folder config for notification clientState %s", client_state)
+        # clientState format: "synexis-rep-agent:drive:{alias}"
+        drive_alias = client_state.replace("synexis-rep-agent:drive:", "").replace("synexis-rep-agent:", "")
+        actual_drive_id = drive_ids.get(drive_alias)
+        if not actual_drive_id:
+            # Fall back: try treating the suffix as a literal drive_id
+            actual_drive_id = drive_alias
+
+        if actual_drive_id in seen_drives:
+            continue  # Already processing this drive in this payload
+        seen_drives.add(actual_drive_id)
+
+        drive_folders = folders_by_drive.get(actual_drive_id, [])
+        if not drive_folders:
+            log.warning("No watched folders found for drive %s (alias: %s)", actual_drive_id, drive_alias)
             continue
 
-        resource_data = notification.get("resourceData") or {}
-        item_id = resource_data.get("id")
-        change_type = notification.get("changeType", "")
-
-        if not item_id:
-            log.warning("Notification missing resourceData.id — running delta sync for %s", folder_name)
-            sync_delta(folder_name=folder_name)
-            continue
-
-        if change_type == "deleted":
-            log.info("Notification: deleted %s in %s", item_id, folder_name)
-            forget_file(sp_item_id=item_id, source_path=f"sharepoint:{item_id}")
-        elif change_type in ("created", "updated"):
-            # Fetch full item metadata from Graph
+        log.info("Notification for drive %s — running delta on %d folder(s)",
+                 drive_alias, len(drive_folders))
+        for folder in drive_folders:
             try:
-                item = _graph_get(f"{GRAPH_BASE}/drives/{folder['drive_id']}/items/{item_id}")
+                sync_delta(folder_name=folder["name"])
             except Exception as exc:
-                log.error("Failed to fetch item %s: %s — falling back to delta", item_id, exc)
-                sync_delta(folder_name=folder_name)
-                continue
-
-            name = item.get("name", "")
-            if item.get("folder"):
-                log.debug("Notification: skipping folder %s", name)
-                continue
-            if should_exclude(name, folder):
-                log.info("Notification: excluding %s", name)
-                continue
-            ext = Path(name).suffix.lstrip(".").lower()
-            if ext not in ("pdf", "docx", "pptx"):
-                log.debug("Notification: skipping unsupported extension %s (%s)", ext, name)
-                continue
-
-            log.info("Notification: ingesting %s in %s", name, folder_name)
-            ingest_file(item_id=item_id, drive_id=folder["drive_id"],
-                        folder_config=folder, item_name=name, item_drive_item=item)
-        else:
-            log.warning("Unknown changeType %s in notification", change_type)
+                log.error("Delta sync failed for %s after notification: %s", folder["name"], exc)
 
 
 # ---------------------------------------------------------------------------
