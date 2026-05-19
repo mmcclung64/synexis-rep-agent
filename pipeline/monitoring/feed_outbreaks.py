@@ -1,11 +1,15 @@
 """Feed 2 — Outbreak intelligence monitor.
 
-Polls two outbreak sources and produces three outputs per qualifying item:
+Polls five outbreak sources and produces three outputs per qualifying item:
 
 Sources:
   - CDC Food Safety RSS (primary; US foodborne outbreaks + recalls).
     (Replaces the briefing's ProMED RSS — ProMED deprecated public RSS in 2024.)
   - FDA outbreak investigations page (secondary; structured, food/healthcare).
+  - WHO Disease Outbreak News RSS (global outbreaks; cross-border relevance filter).
+  - USDA FSIS recalls RSS (meat/poultry/egg recalls; direct food-processing relevance).
+  - Google News via Serper (pathogen keyword + VOC/chemical incident queries;
+    catches local news faster than federal feeds; covers NRC/EPA incident signals).
 
 Per-item pipeline:
   1. Fetch new items since last run (state store: logs/outbreaks_state.json).
@@ -39,6 +43,7 @@ Environment:
     HUBSPOT_ACCESS_TOKEN    — optional; HubSpot output skipped if absent
     MARKETING_EMAIL         — recipient for digest (no digest sent if absent)
     NOTIFY_EMAIL            — fallback for operator alerts
+    SERPER_API_KEY          — optional; Serper/Google News queries skipped if absent
     SMTP_HOST/PORT/USER/PASSWORD — required for digest delivery
     SOURCE_CONTENT_PATH     — base path for corpus drops
 """
@@ -70,6 +75,8 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STATE_PATH = REPO_ROOT / "logs" / "outbreaks_state.json"
+# Rolling log of every HubSpot task created — read by the weekly brief generator.
+HUBSPOT_TASKS_LOG = REPO_ROOT / "logs" / "hubspot_tasks_log.jsonl"
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -92,6 +99,24 @@ FDA_INVESTIGATIONS_URL = (
     "https://www.fda.gov/food/outbreaks-foodborne-illness/"
     "investigations-foodborne-illness-outbreaks"
 )
+WHO_DON_RSS_URL = "https://www.who.int/feeds/entity/csr/don/en/rss.xml"  # 404 as of May 2026; kept for fallback
+FSIS_RECALLS_API_URL = "https://www.fsis.usda.gov/fsis/api/recall/v/1"  # official JSON API (replaces 403 RSS)
+SERPER_NEWS_URL = "https://google.serper.dev/news"
+
+# Serper: keyword queries run each cycle.
+# Pathogen queries target the highest-signal Tier 1 clusters.
+# VOC queries cover chemical/indoor air incidents (NRC/EPA signal proxy).
+SERPER_PATHOGEN_QUERIES = [
+    "Salmonella OR Listeria OR \"E. coli\" outbreak 2026",
+    "MRSA OR norovirus OR Legionella outbreak hospital 2026",
+    "avian influenza H5N1 outbreak 2026",
+]
+SERPER_VOC_QUERIES = [
+    '"VOC contamination" building OR facility OR workplace',
+    '"indoor air quality" outbreak OR incident OR evacuation',
+    '"chemical contamination" school OR hospital OR facility',
+]
+
 REQUEST_TIMEOUT = 20
 HAIKU_MODEL = os.getenv("ANTHROPIC_VALIDATOR_MODEL", "claude-haiku-4-5")
 
@@ -99,6 +124,23 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 HUBSPOT_ACCESS_TOKEN = os.getenv("HUBSPOT_ACCESS_TOKEN", "").strip()
 MARKETING_EMAIL = os.getenv("MARKETING_EMAIL", "").strip()
 NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "mmcclung@synexis.com")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
+# Alpha mode: when set, all HubSpot tasks are assigned to this owner ID
+# regardless of territory routing. Unset to enable full team routing.
+ALPHA_OWNER_ID = os.getenv("ALPHA_OWNER_ID", "").strip() or None
+
+# Vertical → default owner mapping.
+# Used when a matched company has no hubspot_owner_id set.
+# Healthcare is territory-based — company records already carry the correct owner
+# from the DHC import, so it is intentionally omitted here.
+VERTICAL_OWNER_MAP: Dict[str, str] = {
+    "education":       "88106519",   # Larry Shapiro — Higher Ed
+    "animal health":   "82257890",   # Denise Bucari — Animal Health
+    "food processing": "82067944",   # Tyler Mattson — Food Safety
+    "food production": "82067944",   # Tyler Mattson — Food Safety
+    "food safety":     "82067944",   # Tyler Mattson — Food Safety
+    "poultry":         "162416134",  # Federico Sanchez — Poultry
+}
 
 HEADERS = {
     "User-Agent": (
@@ -119,7 +161,90 @@ RELEVANT_VERTICALS = {
     "education",
     "government",
     "hospitality",
+    # VOC/chemical incidents can affect any commercial facility
+    "commercial",
+    "residential",
+    "workplace",
+    "industrial",
 }
+
+# ---------------------------------------------------------------------------
+# Pathogen tier classification
+# ---------------------------------------------------------------------------
+# Tier 1 — DHP efficacy confirmed: use standard campaign angle.
+# Tier 2 — Possible relevance, efficacy not yet established: soften language.
+# If pathogen is empty (allergen recall, mislabeling, etc.) item is filtered out.
+
+TIER_1_PATHOGENS = {
+    "salmonella",
+    "listeria",
+    "e. coli", "e.coli", "escherichia coli",
+    "mrsa", "methicillin-resistant staphylococcus",
+    "candida auris", "c. auris",
+    "vre", "vancomycin-resistant enterococcus",
+    "norovirus",
+    "influenza", "avian influenza", "h5n1", "bird flu",
+    "candida",
+    "mold", "aspergillus",
+    "rsv", "respiratory syncytial virus",
+    "covid-19", "covid", "sars-cov-2", "coronavirus",
+    "staphylococcus", "staph aureus",
+    "streptococcus",
+    "clostridium difficile", "c. diff", "cdiff",
+    "legionella",
+    "campylobacter",
+    "hepatitis a",
+    "cryptosporidium",
+}
+
+TIER_2_PATHOGENS = {
+    "cereulide",
+    "bacillus cereus",
+    "hantavirus",
+    # VOC / chemical — DHP® has demonstrated VOC reduction in controlled environments
+    "voc", "volatile organic compound", "chemical contamination",
+    "indoor air quality", "chemical spill", "toxic chemical",
+}
+
+# Allergens DHP® cannot address — filter these out entirely.
+# Covers the US "Big 9" and common mislabeling recall triggers.
+ALLERGEN_BLOCKLIST = {
+    "peanut", "tree nut", "almond", "cashew", "walnut", "pecan", "pistachio",
+    "hazelnut", "brazil nut",
+    "milk", "dairy", "lactose",
+    "egg",
+    "wheat", "gluten",
+    "soy", "soybean",
+    "fish", "salmon", "tuna", "pollock", "cod", "halibut", "tilapia",
+    "shellfish", "shrimp", "crab", "lobster", "clam", "oyster", "scallop",
+    "sesame",
+    "mustard", "celery", "lupin", "molluscs",
+    "sulfite", "sulphite",
+    "undeclared allergen", "allergen",
+}
+
+
+def _pathogen_tier(pathogen: str) -> Optional[int]:
+    """Return 1, 2, or None.
+
+    1 — confirmed DHP efficacy
+    2 — possible / efficacy not yet established (novel or edge-case pathogen)
+    None — no pathogen, or allergen DHP® cannot address → filter out
+    """
+    if not pathogen or not pathogen.strip():
+        return None
+    p = pathogen.strip().lower()
+    # Tier 1 and Tier 2 take priority — check pathogens before allergens
+    # (avoids "salmon" in ALLERGEN_BLOCKLIST matching "Salmonella")
+    if any(t in p for t in TIER_1_PATHOGENS):
+        return 1
+    if any(t in p for t in TIER_2_PATHOGENS):
+        return 2
+    # Allergen recalls — DHP® has no efficacy here, drop entirely
+    if any(a in p for a in ALLERGEN_BLOCKLIST):
+        return None
+    # Named pathogen not on either list — treat as Tier 2 catch-all
+    return 2
 
 US_STATES = {
     "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
@@ -139,9 +264,10 @@ team selling DHP (dry hydrogen peroxide) air/surface pathogen control systems.
 
 Given the item below, return a single JSON object with these fields:
 
-  "pathogen": string — the pathogen or disease name, as commonly written \
-(e.g. "Salmonella", "E. coli O157:H7", "Candida auris", "norovirus"). \
-Empty string if none is identifiable.
+  "pathogen": string — the pathogen, disease, or hazard name, as commonly \
+written (e.g. "Salmonella", "E. coli O157:H7", "Candida auris", "norovirus"). \
+For chemical/air-quality incidents use "VOC", "chemical contamination", or the \
+specific chemical name. Empty string only if no pathogen or hazard is identifiable.
 
   "affected_vertical": string — one of: "healthcare", "food processing", \
 "food production", "poultry", "animal health", "education", "government", \
@@ -224,6 +350,30 @@ def _fetch_cdc_food_safety() -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # FDA outbreak investigations
 # ---------------------------------------------------------------------------
+def _fetch_fda_detail(url: str) -> str:
+    """Fetch the full body text of an FDA advisory page.
+
+    FDA table rows contain only sparse cell text — serotype names like
+    "Salmonella Newport" get misread as geography, and no state is extracted.
+    Fetching the advisory page gives Haiku the full context it needs.
+    Returns empty string on failure (caller falls back to table-row summary).
+    """
+    if not url or url == FDA_INVESTIGATIONS_URL:
+        return ""
+    resp = _get(url)
+    if resp is None:
+        return ""
+    soup = BeautifulSoup(resp.text, "lxml")
+    # FDA advisory pages wrap main content in .content-body, <article>, or <main>
+    main = (
+        soup.find("div", class_="content-body")
+        or soup.find("article")
+        or soup.find("main")
+    )
+    text = main.get_text(" ", strip=True) if main else soup.get_text(" ", strip=True)
+    return text[:6000]  # cap at 6k chars — well within Haiku's context window
+
+
 def _fetch_fda() -> List[Dict[str, Any]]:
     """Scrape the FDA investigations table into item dicts."""
     print(f"[fda]   Fetching {FDA_INVESTIGATIONS_URL} …")
@@ -257,6 +407,222 @@ def _fetch_fda() -> List[Dict[str, Any]]:
         })
     print(f"[fda]   {len(items)} rows parsed.")
     return items
+
+
+# ---------------------------------------------------------------------------
+# WHO Disease Outbreak News RSS
+# ---------------------------------------------------------------------------
+def _fetch_who_don() -> List[Dict[str, Any]]:
+    """Return WHO Disease Outbreak News items.
+
+    WHO's RSS (https://www.who.int/feeds/entity/csr/don/en/rss.xml) returned
+    404 as of May 2026. Primary path: targeted Serper query for WHO DON pages.
+    Falls back to the RSS attempt if Serper is not configured.
+    """
+    # Primary: Serper search targeting who.int DON item pages directly
+    if SERPER_API_KEY:
+        print("[who]   Fetching WHO DONs via Serper …")
+        results = _serper_query('site:who.int "disease-outbreak-news/item" 2026', num=10)
+        items: List[Dict[str, Any]] = []
+        for r in results:
+            link = r.get("link", "")
+            if not link or "disease-outbreak-news/item" not in link:
+                continue
+            items.append({
+                "source": "who",
+                "id": _item_id("who", link),
+                "title": r.get("title", "").strip(),
+                "summary": r.get("snippet", "").strip(),
+                "link": link,
+                "published": r.get("date", ""),
+            })
+        print(f"[who]   {len(items)} entries via Serper.")
+        return items
+
+    # Fallback: try the RSS (likely dead but worth one attempt)
+    print(f"[who]   Fetching {WHO_DON_RSS_URL} (fallback — may be 404) …")
+    parsed = feedparser.parse(WHO_DON_RSS_URL)
+    entries = parsed.entries
+
+    if parsed.bozo and not entries:
+        resp = _get(WHO_DON_RSS_URL)
+        if resp:
+            soup = BeautifulSoup(resp.content, "lxml-xml")
+            entries_raw = soup.find_all("item")
+            items = []
+            for e in entries_raw:
+                link = (e.find("link") or e.find("guid") or e)
+                link_text = (link.get_text(" ") if link else "").strip()
+                title = (e.find("title") or e).get_text(" ").strip()
+                desc = (e.find("description") or e).get_text(" ").strip()
+                guid = link_text or title
+                items.append({
+                    "source": "who",
+                    "id": _item_id("who", guid),
+                    "title": title,
+                    "summary": desc,
+                    "link": link_text,
+                    "published": (e.find("pubDate") or e).get_text(" ").strip(),
+                })
+            print(f"[who]   {len(items)} entries via fallback parser.")
+            return items
+        print(f"[who]   WARN: feed unavailable and Serper not configured.")
+        return []
+
+    items = []
+    for entry in entries:
+        guid = entry.get("id") or entry.get("link", "")
+        items.append({
+            "source": "who",
+            "id": _item_id("who", guid),
+            "title": entry.get("title", "").strip(),
+            "summary": BeautifulSoup(
+                entry.get("summary", ""), "html.parser"
+            ).get_text(" ").strip(),
+            "link": entry.get("link", "").strip(),
+            "published": entry.get("published", ""),
+        })
+    print(f"[who]   {len(items)} entries in feed.")
+    return items
+
+
+# ---------------------------------------------------------------------------
+# USDA FSIS recalls RSS
+# ---------------------------------------------------------------------------
+def _fetch_fsis() -> List[Dict[str, Any]]:
+    """Return USDA FSIS recall items from the official JSON API.
+
+    FSIS launched a Recall and Public Health Alert API in Sept 2023.
+    The legacy RSS (https://www.fsis.usda.gov/rss/recalls.xml) returns 403
+    as of May 2026 — replaced by the JSON API endpoint.
+    API docs: https://www.fsis.usda.gov/science-data/developer-resources/recall-api
+    """
+    print(f"[fsis]  Fetching {FSIS_RECALLS_API_URL} …")
+    try:
+        r = requests.get(
+            FSIS_RECALLS_API_URL,
+            params={"pageSize": 50},
+            headers={**HEADERS, "Accept": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except requests.RequestException as exc:
+        print(f"[fsis]  WARN: API fetch failed — {exc}")
+        return []
+    except (ValueError, KeyError) as exc:
+        print(f"[fsis]  WARN: API response parse failed — {exc}")
+        return []
+
+    # API may return a list directly or wrapped under a key
+    records = data if isinstance(data, list) else data.get("results", data.get("data", []))
+    items: List[Dict[str, Any]] = []
+    for rec in records:
+        product = rec.get("productDescription") or rec.get("name") or ""
+        reason = rec.get("reasonForRecall") or ""
+        recall_num = rec.get("recallNumber") or rec.get("id") or ""
+        title_parts = [p for p in [recall_num, product, reason] if p]
+        title = " — ".join(title_parts) or "FSIS Recall"
+        raw_link = rec.get("url") or rec.get("link") or ""
+        link = (
+            raw_link if raw_link.startswith("http")
+            else f"https://www.fsis.usda.gov{raw_link}" if raw_link
+            else FSIS_RECALLS_API_URL
+        )
+        guid = recall_num or link or title
+        summary = " | ".join([
+            f"Product: {product}",
+            f"Reason: {reason}",
+            f"Distribution: {rec.get('distributionList') or ''}",
+        ])
+        items.append({
+            "source": "fsis",
+            "id": _item_id("fsis", str(guid)),
+            "title": title,
+            "summary": summary,
+            "link": link,
+            "published": rec.get("recallInitiationDate") or rec.get("publicHealthAlertDate") or "",
+        })
+    print(f"[fsis]  {len(items)} records from API.")
+    return items
+
+
+# ---------------------------------------------------------------------------
+# Serper (Google News) — pathogen + VOC queries
+# ---------------------------------------------------------------------------
+def _serper_query(query: str, num: int = 10) -> List[Dict[str, Any]]:
+    """Run a single Serper news query. Returns raw result list."""
+    if not SERPER_API_KEY:
+        return []
+    try:
+        r = requests.post(
+            SERPER_NEWS_URL,
+            headers={
+                "X-API-KEY": SERPER_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json={"q": query, "num": num},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json().get("news", [])
+    except requests.RequestException as exc:
+        print(f"  [serper] WARN: query '{query[:60]}' failed — {exc}")
+        return []
+
+
+def _fetch_serper() -> List[Dict[str, Any]]:
+    """Run all Serper pathogen + VOC queries and return normalised item dicts."""
+    if not SERPER_API_KEY:
+        print("[serper] SERPER_API_KEY not set — skipping Google News queries.")
+        return []
+
+    items: List[Dict[str, Any]] = []
+
+    # Pathogen queries
+    print(f"[serper] Running {len(SERPER_PATHOGEN_QUERIES)} pathogen queries …")
+    for query in SERPER_PATHOGEN_QUERIES:
+        for result in _serper_query(query):
+            link = result.get("link", "")
+            if not link:
+                continue
+            items.append({
+                "source": "serper",
+                "id": _item_id("serper", link),
+                "title": result.get("title", "").strip(),
+                "summary": result.get("snippet", "").strip(),
+                "link": link,
+                "published": result.get("date", ""),
+                "voc_related": False,
+            })
+
+    # VOC / chemical incident queries
+    print(f"[serper] Running {len(SERPER_VOC_QUERIES)} VOC queries …")
+    for query in SERPER_VOC_QUERIES:
+        for result in _serper_query(query):
+            link = result.get("link", "")
+            if not link:
+                continue
+            items.append({
+                "source": "serper",
+                "id": _item_id("serper_voc", link),
+                "title": result.get("title", "").strip(),
+                "summary": result.get("snippet", "").strip(),
+                "link": link,
+                "published": result.get("date", ""),
+                "voc_related": True,
+            })
+
+    # Deduplicate by item ID (same article can appear in multiple query results)
+    seen_ids: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for it in items:
+        if it["id"] not in seen_ids:
+            seen_ids.add(it["id"])
+            deduped.append(it)
+
+    print(f"[serper] {len(deduped)} unique items after dedup ({len(items)} raw).")
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -310,18 +676,25 @@ def _extract_structured(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Relevance
 # ---------------------------------------------------------------------------
-def _is_relevant(ext: Dict[str, Any]) -> Tuple[bool, str]:
-    """Return (keep, reason)."""
+def _is_relevant(ext: Dict[str, Any]) -> Tuple[bool, str, Optional[int]]:
+    """Return (keep, reason, tier).
+
+    tier is 1 (confirmed efficacy), 2 (possible efficacy), or None (filtered).
+    """
     vertical = (ext.get("affected_vertical") or "").strip().lower()
     if not any(v in vertical for v in RELEVANT_VERTICALS):
-        return False, f"vertical '{vertical}' not in Synexis markets"
+        return False, f"vertical '{vertical}' not in Synexis markets", None
+
+    tier = _pathogen_tier(ext.get("pathogen") or "")
+    if tier is None:
+        return False, "no pathogen identified (allergen recall or mislabeling — skipped)", None
 
     geo = ext.get("geography") or []
     us_states = [g for g in geo if g in US_STATES]
     severity = (ext.get("severity") or "").lower()
     if not us_states and severity != "outbreak":
-        return False, "non-US geography and severity below outbreak threshold"
-    return True, "relevant"
+        return False, "non-US geography and severity below outbreak threshold", None
+    return True, "relevant", tier
 
 
 # ---------------------------------------------------------------------------
@@ -384,11 +757,53 @@ def _hs_search_companies_by_state_industry(states: List[str], vertical: str) -> 
         return []
 
 
+def _log_hubspot_task(company_id: str, company_name: str, pathogen: str,
+                      geography: List[str], vertical: str, tier: Optional[int],
+                      voc_related: bool, source_url: str) -> None:
+    """Append one record to the rolling HubSpot tasks log (JSONL)."""
+    record = {
+        "ts": _dt.datetime.utcnow().isoformat() + "Z",
+        "company_id": company_id,
+        "company_name": company_name,
+        "pathogen": pathogen,
+        "geography": geography,
+        "vertical": vertical,
+        "tier": tier,
+        "voc_related": voc_related,
+        "source_url": source_url,
+    }
+    with HUBSPOT_TASKS_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def _resolve_owner(owner_id: Optional[str], vertical: str) -> Optional[str]:
+    """Return the effective HubSpot owner ID for a task.
+
+    Priority order:
+      1. ALPHA_OWNER_ID (alpha mode — routes everything to Michael for review)
+      2. company-level hubspot_owner_id (already assigned, e.g. DHC territory reps)
+      3. VERTICAL_OWNER_MAP fallback (new verticals with no company-level owner)
+    """
+    if ALPHA_OWNER_ID:
+        return ALPHA_OWNER_ID
+    if owner_id:
+        return owner_id
+    v = (vertical or "").strip().lower()
+    return VERTICAL_OWNER_MAP.get(v)
+
+
 def _hs_create_task(subject: str, body: str, owner_id: Optional[str],
-                    company_id: str, dry_run: bool) -> bool:
+                    company_id: str, dry_run: bool, vertical: str = "") -> bool:
+    # Resolve owner via priority chain (alpha → company → vertical map)
+    effective_owner = _resolve_owner(owner_id, vertical)
     if dry_run:
+        route_note = (
+            " [ALPHA — routed to Michael]" if ALPHA_OWNER_ID
+            else f" [vertical map: {vertical}]" if not owner_id and vertical
+            else ""
+        )
         print(f"  [hubspot] DRY RUN — would create task for company {company_id} "
-              f"(owner={owner_id}): {subject}")
+              f"(owner={effective_owner}{route_note}): {subject}")
         return True
     if not HUBSPOT_ACCESS_TOKEN:
         return False
@@ -400,7 +815,7 @@ def _hs_create_task(subject: str, body: str, owner_id: Optional[str],
             "hs_task_status": "NOT_STARTED",
             "hs_task_priority": "HIGH",
             "hs_timestamp": ts,
-            **({"hubspot_owner_id": owner_id} if owner_id else {}),
+            **({"hubspot_owner_id": effective_owner} if effective_owner else {}),
         },
         "associations": [{
             "to": {"id": company_id},
@@ -418,13 +833,26 @@ def _hs_create_task(subject: str, body: str, owner_id: Optional[str],
         return False
 
 
-def _dispatch_hubspot(ext: Dict[str, Any], dry_run: bool) -> List[str]:
-    """Create HubSpot tasks for matching companies. Returns list of company IDs reached."""
+def _dispatch_hubspot(ext: Dict[str, Any], dry_run: bool,
+                      hs_dispatched: Optional[set] = None) -> List[str]:
+    """Create HubSpot tasks for matching companies. Returns list of company IDs reached.
+
+    hs_dispatched: a set of (company_id, pathogen_lower) tuples already actioned
+    this run — used to suppress duplicate tasks when the same outbreak appears
+    in multiple news items (e.g. 4 Legionella stories all match Kaiser Santa Clara).
+    """
     if not HUBSPOT_ACCESS_TOKEN:
         print("  [hubspot] HUBSPOT_ACCESS_TOKEN not set — skipping HubSpot output.")
         return []
 
     named = (ext.get("named_company") or "").strip()
+
+    # Single-word names (city names, generic terms) produce too-broad matches.
+    # Require at least 2 words before using the named-company search path.
+    if named and len(named.split()) < 2:
+        print(f"  [hubspot] Skipping single-word name '{named}' — ambiguous, using geo/industry fallback.")
+        named = ""
+
     companies: List[Dict[str, Any]] = []
     if named:
         companies = _hs_search_companies_by_name(named)
@@ -437,26 +865,76 @@ def _dispatch_hubspot(ext: Dict[str, Any], dry_run: bool) -> List[str]:
         if companies:
             print(f"  [hubspot] Geo/industry fallback → {len(companies)} HubSpot matches.")
 
+    if hs_dispatched is None:
+        hs_dispatched = set()
+
     reached: List[str] = []
+    pathogen = ext.get("pathogen") or "Unspecified pathogen"
+    pathogen_key = pathogen.strip().lower()
+    tier = ext.get("_tier", 2)
+    voc_related = ext.get("voc_related", False)
+    facility_type = ext.get("affected_vertical") or "affected facility"
     subject = (
-        f"[Outbreak Alert] {ext.get('pathogen') or 'Unspecified pathogen'} — "
+        f"[{'VOC Incident' if voc_related else 'Outbreak'} Alert] {pathogen} — "
         f"{', '.join(ext.get('geography') or ['US'])}"
     )
+    if voc_related:
+        talking_point = (
+            f"DHP® has demonstrated VOC reduction in controlled environments — "
+            f"relevant outreach opportunity for {facility_type} accounts."
+        )
+    elif tier == 1:
+        talking_point = (
+            f"DHP® has demonstrated efficacy against {pathogen} — "
+            f"a timely reason to reach out."
+        )
+    else:
+        talking_point = (
+            f"DHP® may be relevant to {pathogen} — efficacy not yet formally "
+            f"established. Use your judgment on outreach."
+        )
+    tier_label = (
+        "VOC / Chemical Incident"
+        if voc_related
+        else ("Tier 1 — Confirmed efficacy" if tier == 1 else "Tier 2 — Possible (not yet established)")
+    )
     body = (
-        f"Pathogen: {ext.get('pathogen') or 'N/A'}\n"
+        f"Pathogen / Hazard: {pathogen}\n"
+        f"Classification: {tier_label}\n"
         f"Affected area: {', '.join(ext.get('geography') or []) or 'Unspecified'}\n"
         f"Vertical: {ext.get('affected_vertical') or 'N/A'}\n"
         f"Severity: {ext.get('severity') or 'N/A'}\n\n"
         f"{ext.get('summary') or ''}\n\n"
-        f"Talking point: DHP has demonstrated efficacy against multiple airborne "
-        f"and surface pathogens — a timely reason to reach out.\n\n"
+        f"Talking point: {talking_point}\n\n"
         f"Source: {ext.get('source_url') or ''}"
     )
+    vertical = ext.get("affected_vertical", "")
     for c in companies:
         cid = c.get("id")
-        owner_id = (c.get("properties") or {}).get("hubspot_owner_id")
-        if _hs_create_task(subject, body, owner_id, cid, dry_run):
+        props = c.get("properties") or {}
+        owner_id = props.get("hubspot_owner_id")
+        company_name = props.get("name") or cid
+
+        # Dedup: skip if this (company, pathogen) pair already got a task this run
+        dedup_key = (cid, pathogen_key)
+        if dedup_key in hs_dispatched:
+            print(f"  [hubspot] Skipping duplicate task for company {cid} ({pathogen}) — already actioned this run.")
+            continue
+        hs_dispatched.add(dedup_key)
+
+        if _hs_create_task(subject, body, owner_id, cid, dry_run, vertical=vertical):
             reached.append(cid)
+            if not dry_run:
+                _log_hubspot_task(
+                    company_id=cid,
+                    company_name=company_name,
+                    pathogen=pathogen,
+                    geography=ext.get("geography") or [],
+                    vertical=vertical,
+                    tier=ext.get("_tier"),
+                    voc_related=voc_related,
+                    source_url=ext.get("source_url") or "",
+                )
     return reached
 
 
@@ -521,13 +999,35 @@ def _send_digest(items: List[Dict[str, Any]], dry_run: bool) -> bool:
     ]
     for i, ext in enumerate(items, 1):
         geo = ", ".join(ext.get("geography") or []) or "Unspecified"
+        pathogen = ext.get("pathogen") or "Unspecified pathogen"
+        tier = ext.get("_tier", 2)
+        voc_related = ext.get("voc_related", False)
+        vertical = ext.get("affected_vertical") or "affected vertical"
+        if voc_related:
+            tier_label = "VOC / Chemical Incident"
+            campaign_angle = (
+                f"DHP® has demonstrated VOC reduction in controlled environments — "
+                f"relevant outreach opportunity for {vertical} accounts."
+            )
+        elif tier == 1:
+            tier_label = "Tier 1 — Confirmed efficacy"
+            campaign_angle = (
+                f"DHP® has demonstrated efficacy against {pathogen} — "
+                f"outreach relevance for {vertical} accounts."
+            )
+        else:
+            tier_label = "Tier 2 — Possible efficacy (not yet established)"
+            campaign_angle = (
+                f"DHP® may be relevant to {pathogen} — efficacy not yet formally established. "
+                f"Use judgment on outreach to {vertical} accounts."
+            )
         lines += [
-            f"{i}. {ext.get('pathogen') or 'Unspecified pathogen'} — {geo}",
+            f"{i}. {pathogen} — {geo}",
+            f"   [{tier_label}]",
             f"   Vertical: {ext.get('affected_vertical') or 'N/A'}",
             f"   Severity: {ext.get('severity') or 'N/A'}",
             f"   {ext.get('summary') or ''}",
-            f"   Campaign angle: DHP efficacy against {ext.get('pathogen') or 'airborne/surface pathogens'} "
-            f"— outreach relevance for {ext.get('affected_vertical') or 'affected vertical'} accounts.",
+            f"   Campaign angle: {campaign_angle}",
             f"   Source: {ext.get('source_url') or ''}",
             "",
         ]
@@ -551,7 +1051,13 @@ def _run_bootstrap(confirm: bool, dry_run: bool) -> Dict[str, Any]:
     corpus drop, and the marketing digest on the first real run.
     """
     print("\n=== OUTBREAK FEED — BOOTSTRAP ===")
-    raw_items = _fetch_cdc_food_safety() + _fetch_fda()
+    raw_items = (
+        _fetch_cdc_food_safety()
+        + _fetch_fda()
+        + _fetch_who_don()
+        + _fetch_fsis()
+        + _fetch_serper()
+    )
     state = _load_state()
     seen: Dict[str, Any] = state.get("seen_ids", {})
     now = _dt.datetime.utcnow().isoformat() + "Z"
@@ -583,20 +1089,36 @@ def _run_feed(confirm: bool, dry_run: bool, bootstrap: bool = False) -> Dict[str
     state = _load_state()
     seen: Dict[str, Any] = state.get("seen_ids", {})
 
-    raw_items = _fetch_cdc_food_safety() + _fetch_fda()
+    raw_items = (
+        _fetch_cdc_food_safety()
+        + _fetch_fda()
+        + _fetch_who_don()
+        + _fetch_fsis()
+        + _fetch_serper()
+    )
     new_items = [it for it in raw_items if it["id"] not in seen]
     print(f"[feed_outbreaks] {len(raw_items)} items fetched, {len(new_items)} new since last run.")
 
     qualifying: List[Dict[str, Any]] = []
     filtered = 0
     hubspot_tasks = 0
+    # Dedup set: (company_id, pathogen_lower) — prevents repeat tasks when the
+    # same outbreak appears across multiple news items in a single run.
+    hs_dispatched: set = set()
 
     for it in new_items:
         print(f"\n  [item] {it['source']}: {it['title'][:90]}")
+        # FDA table rows are sparse — fetch the advisory page for full context
+        # so Haiku gets real geography, pathogen detail, and scope.
+        if it["source"] == "fda" and it["link"] != FDA_INVESTIGATIONS_URL:
+            detail = _fetch_fda_detail(it["link"])
+            if detail:
+                it["summary"] = detail
+                print(f"  [fda]   Detail page fetched ({len(detail)} chars).")
         ext = _extract_structured(it)
         if not ext:
             continue
-        keep, reason = _is_relevant(ext)
+        keep, reason, tier = _is_relevant(ext)
         if not keep:
             filtered += 1
             print(f"  [filter] Skipped — {reason}")
@@ -604,8 +1126,10 @@ def _run_feed(confirm: bool, dry_run: bool, bootstrap: bool = False) -> Dict[str
                               "ts": _dt.datetime.utcnow().isoformat() + "Z"}
             continue
 
+        ext["_tier"] = tier  # attach tier for downstream outputs
+
         # Three outputs
-        reached = _dispatch_hubspot(ext, dry_run)
+        reached = _dispatch_hubspot(ext, dry_run, hs_dispatched=hs_dispatched)
         hubspot_tasks += len(reached)
         _drop_corpus_markdown(ext, dry_run)
         qualifying.append(ext)

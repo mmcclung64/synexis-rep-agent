@@ -38,7 +38,23 @@ FEEDS: List[Dict[str, Any]] = [
         "module": feed_outbreaks,
         "description": "ProMED + FDA outbreak intelligence monitor",
     },
+    {
+        "name": "sp_subscription_renewal",
+        "module": None,   # handled inline — see _run_sp_renewal()
+        "description": "SharePoint webhook subscription renewal (72h cadence)",
+    },
 ]
+
+
+def _run_sp_renewal(confirm: bool, dry_run: bool) -> Dict[str, Any]:
+    """Renew SharePoint webhook subscriptions via pipeline.sharepoint_sync."""
+    from pipeline.sharepoint_sync import renew_all_subscriptions, _load_subscriptions
+    if dry_run:
+        subs = _load_subscriptions()
+        return {"status": "dry_run", "subscriptions": list(subs.keys())}
+    renew_all_subscriptions()
+    subs = _load_subscriptions()
+    return {"status": "ok", "subscriptions_renewed": list(subs.keys())}
 
 
 def run_all(confirm: bool = False, dry_run: bool = True, feed_filter: Optional[str] = None) -> None:
@@ -61,7 +77,11 @@ def run_all(confirm: bool = False, dry_run: bool = True, feed_filter: Optional[s
         print(f"[orchestrator] Running feed: {name} ({feed['description']})")
         print(f"{'─'*60}")
         try:
-            result = feed["module"].run(confirm=confirm, dry_run=dry_run)
+            if feed["module"] is None:
+                # Inline feed handler (no module.run signature)
+                result = _run_sp_renewal(confirm=confirm, dry_run=dry_run)
+            else:
+                result = feed["module"].run(confirm=confirm, dry_run=dry_run)
             results.append({"feed": name, "status": "ok", "result": result})
         except Exception as exc:  # noqa: BLE001
             tb = traceback.format_exc()

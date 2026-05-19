@@ -9,6 +9,10 @@ const SETTINGS_KEY = "sra.settings";
 const SESSION_KEY = "sra.session";
 const MAX_HISTORY_TURNS = 8;
 
+// Set to true during corpus rebuilds / Pinecone wipes to block all queries.
+const MAINTENANCE_MODE = true;
+const MAINTENANCE_MESSAGE = "I am currently undergoing maintenance. Please try back later.";
+
 const $ = (id) => document.getElementById(id);
 
 // ---------- settings ----------
@@ -19,6 +23,7 @@ async function loadSettings() {
     apiUrl: (s.apiUrl || DEFAULT_API_URL).replace(/\/$/, ""),
     apiKey: s.apiKey || "",
     userName: s.userName || "",
+    returnToSend: s.returnToSend !== false,
   };
 }
 
@@ -545,6 +550,12 @@ async function ensureUserName(settings) {
   return next;
 }
 
+function updatePlaceholder(returnToSend) {
+  $("queryInput").placeholder = returnToSend
+    ? "Ask a question…  (Shift+Enter for new line)"
+    : "Ask a question…  (Cmd/Ctrl+Enter to send)";
+}
+
 async function init() {
   let settings = await loadSettings();
   settings = await ensureUserName(settings);
@@ -553,6 +564,12 @@ async function init() {
   $("userName").value = settings.userName;
   $("apiUrl").value = settings.apiUrl;
   $("apiKey").value = settings.apiKey;
+  $("returnToSend").checked = settings.returnToSend;
+  updatePlaceholder(settings.returnToSend);
+
+  $("returnToSend").addEventListener("change", () => {
+    updatePlaceholder($("returnToSend").checked);
+  });
 
   renderHistoryFromSession(session);
 
@@ -572,6 +589,7 @@ async function init() {
       apiUrl: $("apiUrl").value.trim().replace(/\/$/, "") || DEFAULT_API_URL,
       apiKey: $("apiKey").value.trim(),
       userName: $("userName").value.trim(),
+      returnToSend: $("returnToSend").checked,
     };
     await saveSettings(next);
     $("settingsStatus").textContent = "Saved.";
@@ -595,9 +613,11 @@ async function init() {
 
   $("ask").addEventListener("click", submit);
   $("queryInput").addEventListener("keydown", (ev) => {
-    if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
-      ev.preventDefault();
-      submit();
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      if ($("returnToSend").checked || ev.metaKey || ev.ctrlKey) {
+        ev.preventDefault();
+        submit();
+      }
     }
   });
 
@@ -606,6 +626,14 @@ async function init() {
   async function submit() {
     const q = $("queryInput").value.trim();
     if (!q) return;
+
+    if (MAINTENANCE_MODE) {
+      const turnEl = addTurnEl(q, "");
+      turnEl.querySelector(".a").textContent = MAINTENANCE_MESSAGE;
+      $("queryInput").value = "";
+      return;
+    }
+
     const settingsNow = await loadSettings();
     const turnEl = addTurnEl(q, "…");
     turnEl.scrollIntoView({ behavior: "smooth", block: "start" });

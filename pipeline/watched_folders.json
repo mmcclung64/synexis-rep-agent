@@ -1,0 +1,199 @@
+{
+  "_comment": "Golden copy folder config for SharePoint sync pipeline. Each entry is one watched folder. 'tier' is the default for all files in that folder unless overridden by content_type_overrides. Tiers: 1=cite+link, 2=shareable, 3=background-only. 'exclude_patterns' are filename glob patterns — matching files are skipped entirely (not ingested). Update item_id and drive_id values when Product Management and Sales folder IDs are confirmed.",
+
+  "drive_ids": {
+    "MarketingSite": "b!sALhEjO5wkOXIGt9l_1x1R-hWqA7Hq5Jlbdb6nVGVe4C-DoVCdi6RYqg39lO8pZc",
+    "SalesTeamFiles": "b!Ui736gtBNEGImDNsdasfI5sTKoObYVJLmtRWt35UE2kamsQrtqPUQ5P_h1O6oQuO"
+  },
+
+  "watched_folders": [
+    {
+      "name": "Brand Assets and Regulations",
+      "drive_id": "MarketingSite",
+      "item_id": "01CCVYLW6NVMDAJWCCNBC37FJHSV53ZDA7",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "_comment": "Brand guidelines shape agent tone/rails but are never cited or surfaced to reps. Tier 3 = background only. Consider encoding key rules directly in system prompt rather than RAG.",
+      "exclude_patterns": [],
+      "content_types": [
+        "Brand Message Guidelines"
+      ]
+    },
+    {
+      "name": "Marketing Approved Collateral",
+      "drive_id": "MarketingSite",
+      "item_id": "01CCVYLW3Q4WCWYJCFQRGYTOHLO2DBL5G7",
+      "default_tier": 2,
+      "ingest": true,
+      "surface_citations": true,
+      "_comment": "Primary external-shareable folder. Most content is Tier 2 (shareable, not citeable as proof). HubSpot Documents links generated for all Tier 2 items and stored in chunk metadata. Price Sheets and Training Video Scripts are excluded.",
+      "exclude_patterns": [
+        "*Price Sheet*",
+        "*Price_Sheet*",
+        "*price sheet*",
+        "*Training Video Script*",
+        "*Training_Video_Script*"
+      ],
+      "content_types": [
+        "Customer Facing Master Deck",
+        "Industry Specific Decks",
+        "Industry One Pagers",
+        "Industry Case Studies",
+        "Industry Customer Quotes",
+        "General Videos",
+        "Industry Videos"
+      ],
+      "excluded_content_types": [
+        "Industry Price Sheets",
+        "Training Video Scripts"
+      ],
+      "chunking_notes": {
+        "Customer Facing Master Deck": "One chunk per slide; prepend slide title. Do not share logo slide.",
+        "Industry Specific Decks": "One chunk per slide; prepend slide title.",
+        "Industry One Pagers": "Single chunk if under ~800 tokens.",
+        "Industry Case Studies": "Single chunk if under ~800 tokens.",
+        "General Videos": "Transcript-based if available; otherwise metadata-only chunk.",
+        "Industry Videos": "Transcript-based if available; otherwise metadata-only chunk."
+      }
+    },
+    {
+      "name": "Product Management Folder",
+      "drive_id": "TBD",
+      "item_id": "TBD",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "_comment": "PLACEHOLDER — item_id and drive_id pending Michael's confirmation. Mix of Tier 1 (Regulatory Opinions) and Tier 3 (everything else). Tier overrides applied per content type.",
+      "exclude_patterns": [],
+      "content_type_overrides": {
+        "Regulatory Opinions": {
+          "tier": 1,
+          "surface_citations": true,
+          "chunking": "Section-aware; ~400-500 tokens"
+        }
+      },
+      "content_types": [
+        "UK Marketing Compliance",
+        "Regulatory Opinions",
+        "FAQ",
+        "Device Troubleshooting"
+      ],
+      "chunking_notes": {
+        "FAQ": "Put latest version only in folder — confirms needed with Jimmy.",
+        "Regulatory Opinions": "Section-aware chunking; cite as proof (Tier 1)."
+      }
+    },
+    {
+      "name": "Training Decks",
+      "drive_id": "SalesTeamFiles",
+      "item_id": "016VCKDAVK5HQHIJMZRRAIVOAWH5LG6ZXS",
+      "_comment": "Confirmed May 19, 2026. Lives under /Sales Training in SalesTeamFiles drive. Currently empty — content coming. Tier 3 background only.",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "exclude_patterns": [],
+      "content_types": [
+        "Competitor Training",
+        "Competitor Analysis",
+        "Synexis Overview"
+      ],
+      "chunking_notes": {
+        "Competitor Training": "Section-aware; ~400-500 tokens. Requires Nick + sales leadership sign-off.",
+        "Competitor Analysis": "Section-aware; ~400-500 tokens."
+      }
+    },
+    {
+      "name": "Vertical Strategy & Pacing Updates",
+      "drive_id": "SalesTeamFiles",
+      "item_id": "016VCKDAS27AOSNEVGYVBYRRBUJXTZZEWI",
+      "_comment": "Confirmed May 19, 2026. Root-level folder in SalesTeamFiles drive. Contains 6 vertical subfolders: Animal Health, Food Processing, General Sales Strategy, Healthcare, Higher Education, Poultry. Webhook covers all subfolders recursively. Tier 3 background only.",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "exclude_patterns": [],
+      "content_types": [
+        "Vertical Playbooks",
+        "Webinar Transcripts"
+      ],
+      "subfolders_confirmed": [
+        "Animal Health",
+        "Food Processing",
+        "General Sales Strategy",
+        "Healthcare",
+        "Higher Education",
+        "Poultry"
+      ],
+      "chunking_notes": {
+        "Vertical Playbooks": "Section-aware; ~400-500 tokens.",
+        "Webinar Transcripts": "Rolling window by speaker turn; ~500 tokens with overlap. Clean PPB references before ingest."
+      }
+    }
+  ],
+
+  "web_sourced": {
+    "_comment": "Track 4 — crawled from synexis.com. Handled by existing ingest_web.py pipeline, not the SharePoint webhook pipeline. url-manifest.txt drives crawl scope.",
+    "default_tier": 2,
+    "content_type_overrides": {
+      "Published Studies": { "tier": 1 },
+      "Patents": { "tier": 1 },
+      "Blogs": { "tier": 1 },
+      "Press Releases": { "tier": 1 },
+      "Science Articles": { "tier": 1 }
+    },
+    "content_types": [
+      "Device Manuals",
+      "Device Fact Sheets",
+      "Device Videos",
+      "Published Studies",
+      "Patents",
+      "Blogs",
+      "Press Releases",
+      "Science Articles"
+    ],
+    "notes": [
+      "Device Manuals, Fact Sheets, Videos: Tier 2 — pull from website, not folders (per JR coaching notes)",
+      "Published Studies, Blogs, Press Releases, Science Articles: Tier 1 AND Tier 2 — both citable and shareable",
+      "Patents: Tier 1 — Jimmy to confirm if standard folder supplement needed",
+      "Re-crawl frequency TBD — needs decision"
+    ]
+  },
+
+  "system_prompt_rails": {
+    "_comment": "Hard-coded behavioral rules from JR High Level Rules sheet — encode in system prompt, not RAG",
+    "rules": [
+      "Default messaging aligned with the 6 external video transcripts",
+      "No pricing discussions — route to Synexis Rep",
+      "Default to brand guidelines as basis for response",
+      "DHP® — always use trademark; 'trace amounts' or 'single digit PPB' for concentration",
+      "Competitor discussions: technology types only, no brand names",
+      "No customer names/logos unless from published study",
+      "Point to shareable asset whenever possible",
+      "If stumped — 'contact your Synexis Rep'"
+    ]
+  },
+
+  "hubspot_docs": {
+    "_comment": "HubSpot Documents link registry config. Links generated for Tier 1 and Tier 2 content only. Registry stored in logs/hubspot_docs_registry.json.",
+    "generate_links_for_tiers": [1, 2],
+    "registry_path": "logs/hubspot_docs_registry.json",
+    "link_types": {
+      "pptx": "deck",
+      "pdf": "slide",
+      "mp4": "webpage",
+      "default": "slide"
+    }
+  },
+
+  "open_questions": [
+    "Product Management Folder: confirm drive_id (MarketingSite or separate drive?) and item_id — last remaining TBD",
+    "Training Video Scripts: excluded pending quiz strip — when stripped, remove from Marketing Approved Collateral exclude_patterns and re-ingest",
+    "FAQ: Jimmy to confirm 'latest' version and folder location within Product Management",
+    "Patents: Jimmy to confirm if standard folder supplement needed alongside website crawl",
+    "Industry Specific Decks: in development — confirm when ready to ingest",
+    "Re-crawl frequency for web content: daily vs. weekly decision needed",
+    "Competitor Training/Analysis: Nick + sales leadership sign-off required before those files go into Training Decks folder",
+    "Webinar Transcripts: need PPB reference cleanup before ingest — confirm if already in Vertical Strategy & Pacing Updates or a separate folder",
+    "Videos: confirm if transcript files accompany video files in SharePoint, or metadata-only chunks"
+  ]
+}

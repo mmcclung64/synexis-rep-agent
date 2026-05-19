@@ -42,6 +42,7 @@ No-cost latency improvements implemented while waiting on Azure App Registration
 
 - **Render load test numbers** — run `python work/load_test.py --workers 10` from your machine and record p95 before Partner Beta
 - **`POST /cache/clear` wiring** — call from `embed_load.py` after any Pinecone upsert/delete so cache stays coherent with corpus changes
+- **VOC/CFU eval flake (Q5)** — pre-existing 17/18 baseline, not a regression. Root cause: Rochester study chunk contains CFU data alongside VOC data; model mentions CFU in study-methodology context, which `must_not_contain` flags as a blunt string match. Fix deferred until v2 re-ingest on Jimmy's content list — retrieval behavior may change, making the fix more targeted. If still failing post-ingest, tighten VOC rule in system prompt to explicitly forbid CFU references even in study descriptions when question is VOC-focused.
 
 ---
 

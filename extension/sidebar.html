@@ -67,7 +67,18 @@
     }
     .turn { margin-bottom: 18px; }
     .turn .q {
-      font-weight: 600; margin-bottom: 6px;
+      width: fit-content;
+      max-width: 85%;
+      margin-left: auto;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: #ebf8fa;
+      color: #002e6d;
+      border-radius: 16px 16px 4px 16px;
+      font-weight: 500;
+      font-size: 13px;
+      line-height: 1.4;
+      word-wrap: break-word;
     }
     .turn .a {
       white-space: pre-wrap; line-height: 1.45;
@@ -92,7 +103,7 @@
       display: inline-block; min-width: 20px; font-weight: 600;
       /* Match the inline badge color so an inline [N] and its sources-list entry
          read as the same visual citation system. */
-      color: #0F2D69;
+      color: #002e6d;
     }
     .cite .path {
       word-break: break-all;
@@ -107,7 +118,7 @@
       min-width: 14px; height: 14px; line-height: 14px;
       padding: 0 4px;
       border-radius: 999px;
-      background: #0F2D69; color: #fff;
+      background: #002e6d; color: #ebf8fa;
       font-size: 9px; font-weight: 600; font-family: inherit;
       vertical-align: super;
       margin: 0 1px;
@@ -116,7 +127,7 @@
       position: relative;
       user-select: none;
     }
-    .cite-badge:hover, .cite-badge:focus { background: #1a3e82; outline: none; }
+    .cite-badge:hover, .cite-badge:focus { background: #002e6d; color: #5fd0e0; outline: none; }
     .cite-sep { font-size: 9px; color: var(--muted); margin: 0 1px; }
 
     .cite-tooltip {
@@ -216,7 +227,7 @@
       line-height: 1.4;
     }
     .table-wrap th {
-      background: #0F2D69;
+      background: #002e6d;
       color: #fff;
       font-weight: 600;
       text-align: left;
@@ -254,7 +265,7 @@
     }
     .feedback .fb-btn:hover:not(:disabled) { background: #f3f4f6; color: var(--fg); }
     .feedback .fb-btn.active {
-      background: #0F2D69; color: #fff; border-color: #0F2D69;
+      background: #002e6d; color: #fff; border-color: #002e6d;
     }
     .feedback .fb-btn:disabled { cursor: default; opacity: 0.7; }
     /* Keep the selected rating at full saturation after submit so the rep
@@ -316,6 +327,10 @@
     <input type="text" id="apiUrl" placeholder="https://synexis-rep-agent.onrender.com" />
     <label for="apiKey">Partner key (optional)</label>
     <input type="password" id="apiKey" placeholder="leave blank for Beta" autocomplete="off" />
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:10px; font-size:12px; color:var(--muted);">
+      <input type="checkbox" id="returnToSend" />
+      Return sends message (Shift+Enter for new line)
+    </label>
     <div class="row">
       <button id="saveSettings" class="primary">Save</button>
       <button id="testConnection">Test connection</button>

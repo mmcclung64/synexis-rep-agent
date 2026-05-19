@@ -19,7 +19,7 @@ import re
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -470,6 +470,58 @@ async def cache_clear(
     n = _cache.clear()
     log_event("cache.cleared", partner_key=partner_key, entries_cleared=n)
     return {"ok": True, "entries_cleared": n}
+
+
+@app.post("/graph/notifications")
+async def graph_notifications(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> Response:
+    """Microsoft Graph change-notification webhook endpoint.
+
+    Graph requires two things from this endpoint:
+      1. Validation handshake — on subscription creation Graph sends a GET (or POST)
+         with ?validationToken=<token>. Respond within 10 seconds with 200 + the token
+         as plain text, Content-Type: text/plain.
+      2. Normal notifications — POST with JSON payload. Respond 202 immediately,
+         then process asynchronously in a background task so Graph doesn't time out.
+
+    Auth: Graph validates via clientState in the payload body (checked in
+    pipeline.sharepoint_sync.process_notification). No partner key required here
+    because the caller is Microsoft's infrastructure, not a rep client.
+    """
+    # ── Validation handshake ────────────────────────────────────────────────
+    validation_token = request.query_params.get("validationToken")
+    if validation_token:
+        log_event("graph.subscription_validation", token_len=len(validation_token))
+        return Response(
+            content=validation_token,
+            media_type="text/plain",
+            status_code=200,
+        )
+
+    # ── Normal notification ─────────────────────────────────────────────────
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    notification_count = len(payload.get("value", []))
+    log_event("graph.notification_received", count=notification_count)
+
+    # Process asynchronously — Graph requires 202 within a few seconds.
+    background_tasks.add_task(_run_notification_processing, payload)
+
+    return Response(status_code=202)
+
+
+def _run_notification_processing(payload: dict) -> None:
+    """Background task: process Graph notifications after 202 is sent."""
+    try:
+        from pipeline.sharepoint_sync import process_notification
+        process_notification(payload)
+    except Exception as exc:
+        log_event("graph.notification_error", error=str(exc)[:500])
 
 
 # Browser-based UI for testing and demos. Mounted last so /health and /query
