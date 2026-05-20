@@ -182,8 +182,9 @@ function renderBadge(n, citation, turnKey) {
   const snippet = escapeHtml(citation.snippet || "");
   const shareUrl = citation.share_url || "";
   // TODO(final-build): Replace raw file_path with a cleaned display name before launch.
+  // Use <span> not <a> here — cite-badge is already an <a>, so nesting anchors is invalid HTML.
   const pathEl = shareUrl
-    ? `<a class="tt-path tt-path-link" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">[${n}] ${path}${pageStr}</a>`
+    ? `<span class="tt-path tt-path-link" role="link" tabindex="0" data-href="${escapeHtml(shareUrl)}">[${n}] ${path}${pageStr}</span>`
     : `<span class="tt-path">[${n}] ${path}${pageStr}</span>`;
   return (
     `<a class="cite-badge" href="#src-${turnKey}-${n}" data-n="${n}" tabindex="0">${n}` +
@@ -350,6 +351,23 @@ document.addEventListener("focusout", (ev) => {
   const tooltip = badge.querySelector(".cite-tooltip");
   if (!tooltip) return;
   tooltip.style.display = "none";
+});
+
+// Open document link when clicking/entering on tt-path-link spans (can't nest <a> inside cite-badge <a>).
+document.addEventListener("click", (ev) => {
+  const el = ev.target && ev.target.closest && ev.target.closest(".tt-path-link");
+  if (!el) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const href = el.dataset.href;
+  if (href) window.open(href, "_blank", "noopener");
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const el = ev.target && ev.target.closest && ev.target.closest(".tt-path-link");
+  if (!el) return;
+  ev.preventDefault();
+  const href = el.dataset.href;
+  if (href) window.open(href, "_blank", "noopener");
 });
 
 function addTurnEl(query, state) {
