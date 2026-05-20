@@ -120,6 +120,13 @@
     .ans-expand-all:hover { color: var(--fg); }
     .ans-section { border-top: 1px solid var(--line); }
     .ans-section:last-child { border-bottom: 1px solid var(--line); }
+    /* Sources accordion — styled as metadata, not a primary section */
+    .ans-section-sources .ans-section-hd {
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .ans-section-sources .ans-section-hd:hover { color: var(--fg); }
     .ans-section-hd {
       display: flex; align-items: center; gap: 7px;
       width: 100%; text-align: left; background: none; border: none;

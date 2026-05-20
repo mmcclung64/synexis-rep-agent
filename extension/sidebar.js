@@ -54,7 +54,7 @@ async function saveSettings(s) {
 // them in chrome.storage.local for INTROS_TTL_MS. Falls back to the hardcoded
 // VERTICAL_INTROS constant when the API is unreachable or the cache is empty.
 
-const INTROS_CACHE_KEY = "sra.intros";
+const INTROS_CACHE_KEY = "sra.intros.v2"; // bump to bust old cache on reload
 const INTROS_TTL_MS    = 12 * 60 * 60 * 1000; // 12 hours
 
 // activeIntros starts as the hardcoded defaults and is swapped out once the
@@ -1097,14 +1097,12 @@ async function init() {
     };
 
     const answerEl = turnEl.querySelector(".a");
-    // Show a vertical-specific intro instantly — visible during the network
-    // round-trip and LLM first-token latency. If the LLM streams a real preamble
-    // it naturally replaces this text; if it jumps straight to ## sections this
-    // stays as the visible lead-in until the sections pop in on final render.
-    // activeIntros is corpus-fresh (fetched from the API at startup); falls back
-    // to the hardcoded VERTICAL_INTROS constant when offline or before the fetch resolves.
+    // Show the short, controlled VERTICAL_INTROS placeholder instantly.
+    // This stays visible for the full loading phase — we don't stream the LLM
+    // preamble into the DOM for accordion responses, which eliminates the flash
+    // caused by replacing streamed plain text with the final HTML layout.
     answerEl.textContent =
-      activeIntros[_selectedIndustry] ?? activeIntros[""];
+      VERTICAL_INTROS[_selectedIndustry] ?? VERTICAL_INTROS[""];
 
     let streamedText = "";
     let headingsDetected = false; // true once the first ## heading appears in the stream
@@ -1113,25 +1111,18 @@ async function init() {
       const result = await streamQuery(settingsNow, payload, (chunk) => {
         streamedText += chunk;
 
-        if (headingsDetected) return; // freeze — accordion renders on final event
+        if (headingsDetected) return; // accordion confirmed — placeholder stays until final render
 
         // Detect first ## heading in the stream.
         if (streamedText.includes("\n## ") || streamedText.startsWith("## ")) {
           headingsDetected = true;
-          // Only replace the intro if there's meaningful non-whitespace preamble
-          // before the first ##. A leading \n before the heading is not preamble —
-          // leaving the placeholder visible is better than blanking the screen.
-          const hdIdx = streamedText.indexOf("\n## ");
-          if (hdIdx > 0 && streamedText.slice(0, hdIdx).trim()) {
-            answerEl.textContent = streamedText.slice(0, hdIdx).trim();
-          }
-          return;
+          return; // placeholder stays — finalizeTurnEl handles all rendering
         }
 
-        // No headings yet — replace intro with streaming preamble, but only once
-        // there's actual non-whitespace content so a bare leading \n doesn't
-        // erase the placeholder before the first real token arrives.
-        if (streamedText.trim()) {
+        // No ## detected yet. Once we have enough text to be confident this is a
+        // conversational (non-accordion) response, start streaming it to the DOM.
+        // 150 chars without a heading almost certainly means no accordion is coming.
+        if (streamedText.trim().length > 150) {
           answerEl.textContent = streamedText;
         }
       });
@@ -1148,7 +1139,7 @@ async function init() {
           result.context_utilization,
         ),
         turnKey,
-        activeIntros[_selectedIndustry] ?? activeIntros[""],
+        VERTICAL_INTROS[_selectedIndustry] ?? VERTICAL_INTROS[""],
       );
       attachFeedbackControls(turnEl, {
         query: q,
