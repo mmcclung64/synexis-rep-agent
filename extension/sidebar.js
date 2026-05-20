@@ -274,6 +274,71 @@ function renderLines(lines, citeMap, turnKey) {
   return out.join("\n");
 }
 
+// Progressive accordion rendered during streaming (no citations yet).
+// Returns null if no ## headings detected yet — caller falls back to textContent.
+// Completed sections (those before the currently-streaming one) are rendered
+// collapsed so the user can start expanding them immediately.
+// The in-progress section is shown open with a streaming indicator.
+function renderProgressiveAccordion(text, turnKey) {
+  // Detect headings without escaping first so we can bail early cheaply.
+  if (!text.includes("\n## ") && !text.startsWith("## ")) return null;
+
+  const lines = escapeHtml(text).split("\n");
+  if (!lines.some(l => /^##\s/.test(l))) return null;
+
+  const firstHd = lines.findIndex(l => /^##\s/.test(l));
+  const preamble = lines.slice(0, firstHd);
+  const sections = [];
+  let cur = null;
+  for (const line of lines.slice(firstHd)) {
+    if (/^##\s/.test(line)) {
+      if (cur) sections.push({ ...cur, complete: true });
+      cur = { heading: line.replace(/^##\s+/, ""), lines: [] };
+    } else {
+      if (cur) cur.lines.push(line);
+    }
+  }
+  if (cur) sections.push({ ...cur, complete: false }); // last section still streaming
+
+  const citeMap = new Map(); // empty during stream — citations arrive with final event
+  const parts = [];
+
+  if (preamble.some(l => l.trim())) {
+    parts.push(`<div class="ans-preamble">${renderLines(preamble, citeMap, turnKey)}</div>`);
+  }
+
+  if (sections.length > 1) {
+    parts.push(`<div class="ans-expand-bar"><button class="ans-expand-all">Expand all</button></div>`);
+  }
+
+  sections.forEach((s, idx) => {
+    const bodyId = `sec-${turnKey}-${idx}`;
+    if (s.complete) {
+      parts.push(
+        `<div class="ans-section">` +
+          `<button class="ans-section-hd" aria-expanded="false" data-body="${bodyId}">` +
+            `<span class="ans-chevron">&#9654;</span>` +
+            `<span>${inlineTransforms(s.heading, citeMap, turnKey)}</span>` +
+          `</button>` +
+          `<div class="ans-section-body" id="${bodyId}" hidden>${renderLines(s.lines, citeMap, turnKey)}</div>` +
+        `</div>`
+      );
+    } else {
+      // In-progress: visible, no toggle button, cursor blinking to signal streaming
+      parts.push(
+        `<div class="ans-section ans-section-live">` +
+          `<div class="ans-section-hd-static">` +
+            `<span>${inlineTransforms(s.heading, citeMap, turnKey)}</span>` +
+          `</div>` +
+          `<div class="ans-section-body ans-section-body-live">${renderLines(s.lines, citeMap, turnKey)}<span class="ans-cursor"></span></div>` +
+        `</div>`
+      );
+    }
+  });
+
+  return parts.join("");
+}
+
 function renderAnswer(answer, citations, turnKey) {
   const citeMap = new Map();
   for (const c of citations || []) citeMap.set(c.n, c);
@@ -841,13 +906,42 @@ async function init() {
 
     const answerEl = turnEl.querySelector(".a");
     let streamedText = "";
+    let inAccordionMode = false;
 
     try {
       const result = await streamQuery(settingsNow, payload, (chunk) => {
-        // During streaming show plain escaped text (no badges/tables) — the
-        // final event will swap in a fully-rendered answer.
         streamedText += chunk;
-        answerEl.textContent = streamedText;
+
+        // Only attempt accordion rendering at line boundaries (cheaper) and
+        // when we see or already know there are ## headings.
+        const hasHeadings = streamedText.includes("\n## ") || streamedText.startsWith("## ");
+        if (hasHeadings && (chunk.includes("\n") || !inAccordionMode)) {
+          const progressive = renderProgressiveAccordion(streamedText, turnKey);
+          if (progressive !== null) {
+            // Snapshot which sections the user already expanded so we can restore after re-render.
+            const expandedIds = new Set();
+            answerEl.querySelectorAll(".ans-section-hd[aria-expanded='true']").forEach(hd => expandedIds.add(hd.dataset.body));
+
+            inAccordionMode = true;
+            answerEl.innerHTML = progressive;
+
+            // Restore expanded state.
+            if (expandedIds.size > 0) {
+              answerEl.querySelectorAll(".ans-section-hd").forEach(hd => {
+                if (expandedIds.has(hd.dataset.body)) {
+                  hd.setAttribute("aria-expanded", "true");
+                  const body = document.getElementById(hd.dataset.body);
+                  if (body) body.hidden = false;
+                }
+              });
+              syncExpandAll(turnEl);
+            }
+            return;
+          }
+        }
+
+        // Fall back to plain text while waiting for the first ## heading.
+        if (!inAccordionMode) answerEl.textContent = streamedText;
       });
       const wallMs = Date.now() - started;
       const serverMs = (result.timing && result.timing.total_ms) || null;

@@ -136,6 +136,20 @@
       padding: 2px 4px 10px 20px;
       white-space: pre-wrap; line-height: 1.45;
     }
+    /* In-progress (streaming) section — visible immediately, no toggle */
+    .ans-section-hd-static {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 2px; font-size: 13px; font-weight: 600;
+      color: var(--fg); line-height: 1.3;
+    }
+    .ans-section-body-live { display: block; }
+    /* Blinking cursor shown at the end of the streaming section */
+    @keyframes ans-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    .ans-cursor {
+      display: inline-block; width: 2px; height: 0.9em;
+      background: var(--muted); vertical-align: text-bottom;
+      margin-left: 2px; animation: ans-blink 0.9s step-end infinite;
+    }
     .turn .meta {
       color: var(--muted); font-size: 11px; margin-top: 4px;
     }
