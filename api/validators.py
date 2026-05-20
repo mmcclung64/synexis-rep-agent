@@ -19,27 +19,46 @@ def _active_partner_keys() -> List[str]:
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
-def _partner_vertical(key: str) -> Optional[str]:
-    """Return the default industry vertical for a partner key, or None.
+def _partner_verticals(key: str) -> List[str]:
+    """Return the list of industry verticals for a partner key, or empty list.
 
-    Reads the ``PARTNER_VERTICALS`` env var, which must be a JSON object
-    mapping partner key strings to vertical label strings.  Example::
+    ``PARTNER_VERTICALS`` may map a key to a single string OR a JSON array::
 
-        PARTNER_VERTICALS={"hc-alpha-key": "Healthcare", "food-beta-key": "Food Safety"}
+        # single vertical
+        PARTNER_VERTICALS={"diversey-hc-uat-2026": "Healthcare"}
 
-    Keys that are absent, empty, or ``"anonymous"`` return ``None`` so the
+        # multiple verticals — extension renders one overview chip per entry
+        PARTNER_VERTICALS={"vincit-fs-uat-2026": ["Food Safety", "Poultry"]}
+
+    Keys that are absent, empty, or ``"anonymous"`` return ``[]`` so the
     extension falls back to the full industry-picker.
     """
     if not key or key == "anonymous":
-        return None
+        return []
     raw = os.getenv("PARTNER_VERTICALS", "") or ""
     if not raw:
-        return None
+        return []
     try:
         mapping = json.loads(raw)
-        return mapping.get(key) or None
+        val = mapping.get(key)
+        if not val:
+            return []
+        if isinstance(val, list):
+            return [v for v in val if isinstance(v, str) and v]
+        if isinstance(val, str):
+            return [val]
+        return []
     except (json.JSONDecodeError, AttributeError):
-        return None
+        return []
+
+
+def _partner_vertical(key: str) -> Optional[str]:
+    """Return the primary (first) industry vertical for a partner key, or None.
+
+    Thin wrapper around ``_partner_verticals()`` retained for backward compat.
+    """
+    verticals = _partner_verticals(key)
+    return verticals[0] if verticals else None
 
 
 class HistoryTurn(BaseModel):

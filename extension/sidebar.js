@@ -103,7 +103,7 @@ async function loadVerticalIntros(settings) {
 // picker.  Falls back to null (full picker) if the key is unset, the API
 // is unreachable, or the partner is not mapped to a vertical.
 
-const PARTNER_CONFIG_KEY     = "sra.partnerConfig";
+const PARTNER_CONFIG_KEY     = "sra.partnerConfig.v2"; // v2: default_verticals array
 const PARTNER_CONFIG_TTL_MS  = 24 * 60 * 60 * 1000; // 24 hours
 
 async function loadPartnerConfig(settings) {
@@ -902,8 +902,15 @@ async function init() {
   loadVerticalIntros(settings);
 
   // Blocking: fetch partner config so we know which picker to show before rendering.
-  const partnerConfig   = await loadPartnerConfig(settings);
-  const partnerVertical = (partnerConfig && partnerConfig.default_vertical) || null;
+  const partnerConfig = await loadPartnerConfig(settings);
+  // Prefer the array field (default_verticals); fall back to single-string field for
+  // older cached responses.  partnerVerticals is null when no vertical is configured.
+  const partnerVerticals = (partnerConfig && partnerConfig.default_verticals && partnerConfig.default_verticals.length > 0)
+    ? partnerConfig.default_verticals
+    : (partnerConfig && partnerConfig.default_vertical)
+      ? [partnerConfig.default_vertical]
+      : null;
+  const partnerVertical = partnerVerticals ? partnerVerticals[0] : null;  // backward-compat alias
 
   $("returnToSend").addEventListener("change", () => {
     updatePlaceholder($("returnToSend").checked);
@@ -931,25 +938,35 @@ async function init() {
     $("intent-picker").style.display = "";
   }
 
-  // Partner picker — 3-chip focused flow when the partner key maps to a vertical.
-  // Chips: [Vertical overview] [Specific question] [Explore another industry]
-  function showPartnerPicker(vertical) {
-    _selectedIndustry = vertical;
+  // Partner picker — focused chip flow when the partner key maps to one or more verticals.
+  // Chips: one [<Vertical> overview] per vertical + [Specific question] + [Explore another industry]
+  // Adding a new vertical (e.g. Poultry) requires only an env-var update on the backend —
+  // chips are built dynamically from the verticals array returned by /config.
+  function showPartnerPicker(verticals) {
+    const vList = Array.isArray(verticals) ? verticals : [verticals];
+    const primaryVertical = vList[0] || "";
+    _selectedIndustry = primaryVertical;
     $("empty").style.display = "none";
     $("industry-picker").style.display = "none";
     $("intent-picker").style.display = "none";
-    $("partner-prompt").textContent = `What can I help you with for ${vertical} today?`;
+    $("partner-prompt").textContent = vList.length > 1
+      ? "What can I help you with today?"
+      : `What can I help you with for ${primaryVertical} today?`;
+    // One overview chip per vertical, then the shared action chips.
+    const overviewChips = vList
+      .map(v => `<button class="chip" data-partner-intent="overview" data-industry="${escapeHtml(v)}">${escapeHtml(v)} overview</button>`)
+      .join("");
     $("partner-chips").innerHTML =
-      `<button class="chip" data-partner-intent="overview" data-industry="${escapeHtml(vertical)}">${vertical} overview</button>` +
-      `<button class="chip" data-partner-intent="question" data-industry="${escapeHtml(vertical)}">I have a specific question</button>` +
+      overviewChips +
+      `<button class="chip" data-partner-intent="question" data-industry="${escapeHtml(primaryVertical)}">I have a specific question</button>` +
       `<button class="chip chip-dismiss" data-partner-intent="other">Explore another industry</button>`;
     $("partner-picker").style.display = "";
   }
 
   // Show whichever picker is appropriate given whether a partner vertical is set.
   function showInitialPicker() {
-    if (partnerVertical) {
-      showPartnerPicker(partnerVertical);
+    if (partnerVerticals) {
+      showPartnerPicker(partnerVerticals);
     } else {
       showIndustryPicker();
     }

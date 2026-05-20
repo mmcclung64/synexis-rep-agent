@@ -44,6 +44,7 @@ from api.validators import (
     QueryRewriteInfo,
     _active_partner_keys,
     _partner_vertical,
+    _partner_verticals,
     require_partner_key,
 )
 
@@ -474,13 +475,24 @@ async def config(partner_key: str = Depends(require_partner_key)) -> dict:
 
     Response shape::
 
-        {"default_vertical": "Healthcare"}   # or null for unkeyed / generic partners
+        {
+          "default_vertical":  "Healthcare",      # first vertical, or null (backward compat)
+          "default_verticals": ["Healthcare"]      # full list, or null
+        }
 
     The extension calls this once at startup (cached locally for 24 h) to
-    decide whether to show the focused 3-chip partner picker or the full
-    industry picker.
+    decide whether to show the focused partner picker or the full industry
+    picker.  ``default_verticals`` is the canonical field going forward;
+    ``default_vertical`` is kept for older cached responses.
+    To add a second vertical for a partner (e.g. Poultry), update the
+    PARTNER_VERTICALS env var list and bump PARTNER_CONFIG_KEY in the extension
+    so the 24 h cache is busted on next reload.
     """
-    return {"default_vertical": _partner_vertical(partner_key)}
+    verticals = _partner_verticals(partner_key)
+    return {
+        "default_vertical":  verticals[0] if verticals else None,
+        "default_verticals": verticals if verticals else None,
+    }
 
 
 @app.post("/feedback", response_model=FeedbackResponse)
