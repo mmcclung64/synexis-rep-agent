@@ -180,11 +180,13 @@ function renderBadge(n, citation, turnKey) {
     ? ` — page/slide ${escapeHtml(String(page))}`
     : "";
   const snippet = escapeHtml(citation.snippet || "");
+  const shareUrl = citation.share_url || "";
   return (
     `<a class="cite-badge" href="#src-${turnKey}-${n}" data-n="${n}" tabindex="0">${n}` +
       `<span class="cite-tooltip">` +
         `<span class="tt-path">[${n}] ${path}${pageStr}</span>` +
         (snippet ? `<span class="tt-snippet">${snippet}</span>` : "") +
+        (shareUrl ? `<a class="tt-link" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">View document ↗</a>` : "") +
       `</span>` +
     `</a>`
   );
@@ -576,6 +578,56 @@ async function init() {
 
   renderHistoryFromSession(session);
 
+  let _selectedIndustry = "";
+
+  function showIndustryPicker() {
+    $("empty").style.display = "none";
+    $("intent-picker").style.display = "none";
+    $("industry-picker").style.display = "";
+  }
+
+  function showIntentPicker(industry) {
+    _selectedIndustry = industry;
+    $("industry-picker").style.display = "none";
+    $("intent-prompt").textContent = industry
+      ? `Great. What can I help you with for ${industry}?`
+      : "Great. What can I help you with?";
+    $("intent-picker").style.display = "";
+  }
+
+  function hidePickers() {
+    $("industry-picker").style.display = "none";
+    $("intent-picker").style.display = "none";
+  }
+
+  if (session.turns.length === 0) showIndustryPicker();
+
+  document.querySelectorAll("#industry-picker .chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const industry = btn.dataset.industry || "";
+      if (industry) {
+        showIntentPicker(industry);
+      } else {
+        hidePickers();
+        $("queryInput").focus();
+      }
+    });
+  });
+
+  $("intent-overview").addEventListener("click", () => {
+    hidePickers();
+    const q = _selectedIndustry
+      ? `Give me an overview of Synexis products and solutions for ${_selectedIndustry}.`
+      : "Give me a general overview of Synexis products and solutions.";
+    $("queryInput").value = q;
+    submit();
+  });
+
+  $("intent-question").addEventListener("click", () => {
+    hidePickers();
+    $("queryInput").focus();
+  });
+
   $("toggleSettings").addEventListener("click", () => {
     $("settings").classList.toggle("open");
   });
@@ -583,7 +635,9 @@ async function init() {
   $("newConversation").addEventListener("click", async () => {
     session = await resetSession();
     $("history").innerHTML = "";
-    $("empty").style.display = "";
+    $("empty").style.display = "none";
+    _selectedIndustry = "";
+    showIndustryPicker();
     updateTruncationIndicator(session);
   });
 

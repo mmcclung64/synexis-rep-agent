@@ -32,6 +32,35 @@ ASSISTANT_TURN_CLIP_CHARS = 600   # truncate long assistant turns to keep rewrit
 REWRITER_MIN_OUTPUT_CHARS = 5     # shorter output is treated as empty/failed
 
 
+# ---------------------------------------------------------------------------
+# Abbreviation expansion — runs on every query, before the LLM rewriter.
+# Zero-latency, zero-cost. Expands common Synexis domain shorthands so
+# Pinecone sees the full term rather than an acronym that may not match chunks.
+# ---------------------------------------------------------------------------
+
+ABBREVIATIONS: dict[str, str] = {
+    r"\bRTE\b": "ready-to-eat",
+    r"\bHAI\b": "healthcare-associated infection",
+    r"\bHAIs\b": "healthcare-associated infections",
+    r"\bIAQ\b": "indoor air quality",
+    r"\bHACCP\b": "Hazard Analysis Critical Control Points",
+    r"\bFSQA\b": "food safety quality assurance",
+    r"\bICU\b": "intensive care unit",
+    r"\bLTCF\b": "long-term care facility",
+    r"\bHVAC\b": "heating ventilation and air conditioning",
+    r"\bPPB\b": "parts per billion",
+}
+
+
+def expand_abbreviations(query: str) -> str:
+    """Replace known abbreviations with their full forms for better retrieval."""
+    import re
+    result = query
+    for pattern, replacement in ABBREVIATIONS.items():
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return result
+
+
 REWRITER_SYSTEM_PROMPT = """\
 Rewrite the user's latest question into a standalone retrieval query for a Synexis DHP knowledge base.
 
@@ -115,17 +144,21 @@ class QueryRewriter:
 
     def rewrite(self, query: str, history: List[dict]) -> RewriteResult:
         started = time.time()
+
+        # Always expand abbreviations first — zero-cost, no LLM call.
+        expanded = expand_abbreviations(query)
+
         sanitized = _sanitize_for_rewriter(history)
         if len(sanitized) < REWRITER_MIN_HISTORY:
             return RewriteResult(
                 original=query,
-                rewritten=query,
+                rewritten=expanded,
                 skipped=True,
-                reason="no_history",
+                reason="no_history" if expanded == query else "abbreviation_expanded",
                 elapsed_ms=int((time.time() - started) * 1000),
             )
 
-        user_message = _format_rewriter_input(sanitized, query)
+        user_message = _format_rewriter_input(sanitized, expanded)
         try:
             raw = self._call(user_message)
         except Exception as exc:

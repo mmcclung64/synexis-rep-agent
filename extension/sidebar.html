@@ -60,6 +60,28 @@
     #empty {
       color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px;
     }
+    #industry-picker {
+      margin-top: 32px; text-align: center;
+    }
+    .picker-prompt {
+      font-size: 14px; font-weight: 600; color: #002e6d;
+      margin: 0 0 14px;
+    }
+    .picker-chips {
+      display: flex; flex-direction: column; gap: 8px;
+      align-items: stretch; max-width: 220px; margin: 0 auto;
+    }
+    .chip {
+      padding: 9px 14px; border-radius: 20px;
+      border: 1.5px solid #002e6d; background: #fff;
+      color: #002e6d; font-size: 13px; font-weight: 600;
+      cursor: pointer; text-align: center; transition: background 0.15s, color 0.15s;
+    }
+    .chip:hover { background: #002e6d; color: #fff; }
+    .chip.chip-dismiss {
+      border-color: var(--line); color: var(--muted); font-weight: 400;
+    }
+    .chip.chip-dismiss:hover { background: var(--chip); color: var(--fg); }
     .error {
       background: #fff0f0; border: 1px solid #ffc9c9; color: var(--err);
       padding: 8px 10px; border-radius: 4px; font-size: 13px;
@@ -171,6 +193,11 @@
       display: block; margin-bottom: 4px; word-break: break-all;
     }
     .cite-tooltip .tt-snippet { opacity: 0.9; }
+    .cite-tooltip .tt-link {
+      display: inline-block; margin-top: 6px;
+      color: #5fd0e0; text-decoration: none; font-size: 11px; font-weight: 600;
+    }
+    .cite-tooltip .tt-link:hover { text-decoration: underline; }
 
     footer {
       border-top: 1px solid var(--line); padding: 10px 16px;
@@ -352,6 +379,24 @@
 
   <main>
     <div id="empty">Ask a product, efficacy, or vertical question. Answers cite the Synexis knowledge base.</div>
+    <div id="industry-picker" style="display:none">
+      <p class="picker-prompt">To get started, what industry are you focused on?</p>
+      <div class="picker-chips">
+        <button class="chip" data-industry="Healthcare">Healthcare</button>
+        <button class="chip" data-industry="Animal Health">Animal Health</button>
+        <button class="chip" data-industry="Food Safety">Food Safety</button>
+        <button class="chip" data-industry="Higher Education">Higher Education</button>
+        <button class="chip chip-dismiss" data-industry="">Other</button>
+        <button class="chip chip-dismiss" data-industry="">I'm interested in everything</button>
+      </div>
+    </div>
+    <div id="intent-picker" style="display:none">
+      <p class="picker-prompt" id="intent-prompt"></p>
+      <div class="picker-chips">
+        <button class="chip" id="intent-overview">I'd like an overview</button>
+        <button class="chip" id="intent-question">I have a specific question</button>
+      </div>
+    </div>
     <div id="history"></div>
   </main>
 

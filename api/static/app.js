@@ -169,11 +169,13 @@ function renderBadge(n, citation, turnKey) {
     ? ` — page/slide ${escapeHtml(String(page))}`
     : "";
   const snippet = escapeHtml(citation.snippet || "");
+  const shareUrl = citation.share_url || "";
   return (
     `<a class="cite-badge" href="#src-${turnKey}-${n}" data-n="${n}" tabindex="0">${n}` +
       `<span class="cite-tooltip">` +
         `<span class="tt-path">[${n}] ${path}${pageStr}</span>` +
         (snippet ? `<span class="tt-snippet">${snippet}</span>` : "") +
+        (shareUrl ? `<a class="tt-link" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">View document ↗</a>` : "") +
       `</span>` +
     `</a>`
   );
