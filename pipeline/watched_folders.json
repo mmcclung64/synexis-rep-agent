@@ -8,6 +8,22 @@
 
   "watched_folders": [
     {
+      "name": "Training Video Scripts",
+      "drive_id": "MarketingSite",
+      "item_id": "01CCVYLWZKCC7VQ6QH7ZCJ567UREUWWAQJ",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "_comment": "Rep Agent > 03 Internal -- not shareable > Training Video Scripts. 6 module video transcripts (1A-1F). Tier 3 = background only — shapes agent baseline tone/framing per Jimmy's direction. Placeholder quiz docs in place until clean transcripts arrive. Covered by existing MarketingSite drive-level webhook.",
+      "exclude_patterns": [],
+      "content_types": [
+        "Training Video Scripts"
+      ],
+      "chunking_notes": {
+        "Training Video Scripts": "Strip quiz Q&A sections — ingest transcript prose only. One chunk per logical topic break; ~400-500 tokens."
+      }
+    },
+    {
       "name": "Brand Assets and Regulations",
       "drive_id": "MarketingSite",
       "item_id": "01CCVYLW6NVMDAJWCCNBC37FJHSV53ZDA7",
