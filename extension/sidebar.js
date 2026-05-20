@@ -172,16 +172,31 @@ function escapeHtml(s) {
   ));
 }
 
+// Clean up raw file_path values for display.
+// Rules: basename only → locale suffixes → strip FINAL/PROOF → strip 4-digit date codes → underscores→spaces.
+// Extend the locale map as global markets are added.
+function prettyPath(filePath) {
+  // 1. Filename only — drop folder segments and extension
+  let name = (filePath || "").split("/").pop().replace(/\.[^.]+$/, "");
+  // 2. Locale suffixes → readable labels  (add new entries here as markets expand)
+  name = name.replace(/_ESP\b/gi, " (Spanish)");
+  // 3. Strip trailing production suffixes and anything after (FINAL, Final, PROOF, etc.)
+  name = name.replace(/[_ ]+(?:FINAL|Final|PROOF)\b.*$/i, "");
+  // 4. Strip trailing 4-digit date codes (_MMYY)
+  name = name.replace(/_\d{4}$/, "");
+  // 5. Underscores → spaces, collapse whitespace, trim
+  return name.replace(/_/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
 function renderBadge(n, citation, turnKey) {
   if (!citation) return `[${n}]`;
-  const path = escapeHtml(citation.file_path || "");
+  const path = escapeHtml(prettyPath(citation.file_path || ""));
   const page = citation.page_or_slide;
   const pageStr = page !== undefined && page !== null && page !== ""
     ? ` — page/slide ${escapeHtml(String(page))}`
     : "";
   const snippet = escapeHtml(citation.snippet || "");
   const shareUrl = citation.share_url || "";
-  // TODO(final-build): Replace raw file_path with a cleaned display name before launch.
   // Use <span> not <a> here — cite-badge is already an <a>, so nesting anchors is invalid HTML.
   const pathEl = shareUrl
     ? `<span class="tt-path tt-path-link" role="link" tabindex="0" data-href="${escapeHtml(shareUrl)}">[${n}] ${path}${pageStr}</span>`
@@ -277,7 +292,7 @@ function renderCitations(citations, turnKey) {
       const link = c.share_url
         ? ` <a class="cite-link" href="${escapeHtml(c.share_url)}" target="_blank" rel="noopener">View ↗</a>`
         : "";
-      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(c.file_path || "")}</span><span class="page">${page}</span>${link}</div>`;
+      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(prettyPath(c.file_path || ""))}</span><span class="page">${page}</span>${link}</div>`;
     })
     .join("");
   return `<div class="citations"><div class="head">Sources</div>${items}</div>`;
