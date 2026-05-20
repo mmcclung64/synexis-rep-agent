@@ -19,16 +19,16 @@ const MAINTENANCE_MESSAGE = "I am currently undergoing maintenance. Please try b
 // if it jumps straight to ## sections this text stays visible as the lead-in.
 // Edit these strings to tune tone/depth — no redeployment required, just reload the extension.
 const VERTICAL_INTROS = {
-  "Healthcare": "Synexis DHP® technology addresses the unique infection control demands of healthcare environments — from patient rooms and waiting areas to hallways and HVAC-served zones — delivering continuous, touchless pathogen reduction without chemicals, room downtime, or staff intervention. It's designed to complement your existing infection prevention program, not compete with it. Here's how it works for healthcare:",
+  "Healthcare": "Synexis DHP® technology delivers continuous, touchless pathogen reduction across healthcare environments — patient rooms, waiting areas, and hallways — without chemicals, room downtime, or staff intervention.\nHere's how it works for healthcare:",
 
-  "Animal Health": "Synexis DHP® technology provides continuous, chemical-free pathogen control across veterinary clinics, livestock facilities, and animal care spaces — reducing airborne and surface pathogens 24/7 without harming animals, disrupting workflows, or requiring handler intervention. Here's the full picture for animal health:",
+  "Animal Health": "Synexis DHP® technology provides continuous, chemical-free pathogen control across veterinary clinics, livestock facilities, and animal care spaces — without harming animals, disrupting workflows, or requiring handler intervention.\nHere's the full picture for animal health:",
 
-  "Food Safety": "Synexis DHP® technology is purpose-built to complement food safety programs with continuous, touchless pathogen control across both air and surfaces — without leaving chemical residue, disrupting production, or requiring staff intervention. It operates in occupied spaces and runs around the clock, filling the gaps between scheduled sanitation cycles. Here's the full picture for food safety:",
+  "Food Safety": "Synexis DHP® technology is purpose-built to complement food safety programs with continuous, touchless pathogen control across air and surfaces — without chemical residue, production disruption, or staff intervention.\nHere's the full picture for food safety:",
 
-  "Higher Education": "Synexis DHP® technology addresses the air quality and pathogen control challenges unique to dense campus environments — dorms, dining halls, health clinics, classrooms, and rec centers — with continuous, touchless protection that runs in occupied spaces without disrupting campus life. Here's the full picture for higher education:",
+  "Higher Education": "Synexis DHP® technology addresses pathogen control challenges across dense campus environments — dorms, dining halls, health clinics, and classrooms — with continuous, touchless protection that runs in occupied spaces.\nHere's the full picture for higher education:",
 
   // Fallback for "Other", "I'm interested in everything", or no industry selected
-  "": "Synexis DHP® technology delivers continuous, touchless pathogen control across air and surfaces — complementing existing sanitation programs without chemicals, downtime, or staff intervention. Here's what I found:",
+  "": "Synexis DHP® technology delivers continuous, touchless pathogen control across air and surfaces — without chemicals, downtime, or staff intervention.\nHere's what I found:",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -454,7 +454,7 @@ function renderLines(lines, citeMap, turnKey) {
 }
 
 
-function renderAnswer(answer, citations, turnKey) {
+function renderAnswer(answer, citations, turnKey, fallbackPreamble) {
   const citeMap = new Map();
   for (const c of citations || []) citeMap.set(c.n, c);
 
@@ -483,9 +483,14 @@ function renderAnswer(answer, citations, turnKey) {
 
   const parts = [];
 
-  // Preamble (if non-empty)
+  // Preamble — prefer the LLM-generated preamble; fall back to the placeholder
+  // intro text (the same text shown during streaming) so it's never lost when
+  // the model skips straight to ## sections.
   if (preamble.some(l => l.trim())) {
     parts.push(`<div class="ans-preamble">${renderLines(preamble, citeMap, turnKey)}</div>`);
+  } else if (fallbackPreamble) {
+    const fbLines = escapeHtml(fallbackPreamble).split("\n");
+    parts.push(`<div class="ans-preamble">${renderLines(fbLines, citeMap, turnKey)}</div>`);
   }
 
   // Expand all bar — shown when there are multiple sections
@@ -676,12 +681,12 @@ function addTurnEl(query, state) {
   return div;
 }
 
-function finalizeTurnEl(turnEl, answer, citations, meta, turnKey) {
+function finalizeTurnEl(turnEl, answer, citations, meta, turnKey, fallbackPreamble) {
   // Citations accordion is appended inside .a so it integrates naturally with
   // the answer sections and the expand-all / toggle handlers.
   const cits = renderCitations(citations || [], turnKey);
   turnEl.querySelector(".a").innerHTML =
-    renderAnswer(answer || "", citations || [], turnKey) + cits;
+    renderAnswer(answer || "", citations || [], turnKey, fallbackPreamble) + cits;
   turnEl.querySelector(".meta").textContent = meta || "";
 }
 
@@ -1143,6 +1148,7 @@ async function init() {
           result.context_utilization,
         ),
         turnKey,
+        activeIntros[_selectedIndustry] ?? activeIntros[""],
       );
       attachFeedbackControls(turnEl, {
         query: q,
