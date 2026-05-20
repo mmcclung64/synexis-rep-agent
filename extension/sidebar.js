@@ -250,23 +250,16 @@ function renderTableBlock(headerLine, bodyLines, citeMap, turnKey) {
   return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>`;
 }
 
-function renderAnswer(answer, citations, turnKey) {
-  const citeMap = new Map();
-  for (const c of citations || []) citeMap.set(c.n, c);
-
-  // Escape once up front. Markdown-table pipes survive escaping intact, so
-  // detection below operates on the escaped string.
-  const lines = escapeHtml(answer).split("\n");
+// Render an array of pre-escaped lines to HTML, handling tables and inline transforms.
+function renderLines(lines, citeMap, turnKey) {
   const out = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
     const next = lines[i + 1];
-    // GitHub-flavored markdown table: a pipe-bearing line followed by a
-    // separator row ("|---|---|" or with colons for alignment).
     if (/\|/.test(line) && next !== undefined && isTableSeparatorRow(next)) {
       const header = line;
-      i += 2; // skip header + separator
+      i += 2;
       const body = [];
       while (i < lines.length && /\|/.test(lines[i]) && !isTableSeparatorRow(lines[i])) {
         body.push(lines[i]);
@@ -279,6 +272,64 @@ function renderAnswer(answer, citations, turnKey) {
     i++;
   }
   return out.join("\n");
+}
+
+function renderAnswer(answer, citations, turnKey) {
+  const citeMap = new Map();
+  for (const c of citations || []) citeMap.set(c.n, c);
+
+  // Escape once up front.
+  const lines = escapeHtml(answer).split("\n");
+
+  // If no ## headings, render flat as before.
+  if (!lines.some(l => /^##\s/.test(l))) {
+    return renderLines(lines, citeMap, turnKey);
+  }
+
+  // Split into preamble (before first ##) and sections.
+  const firstHd = lines.findIndex(l => /^##\s/.test(l));
+  const preamble = lines.slice(0, firstHd);
+  const sections = [];
+  let cur = null;
+  for (const line of lines.slice(firstHd)) {
+    if (/^##\s/.test(line)) {
+      if (cur) sections.push(cur);
+      cur = { heading: line.replace(/^##\s+/, ""), lines: [] };
+    } else {
+      if (cur) cur.lines.push(line);
+    }
+  }
+  if (cur) sections.push(cur);
+
+  const parts = [];
+
+  // Preamble (if non-empty)
+  if (preamble.some(l => l.trim())) {
+    parts.push(`<div class="ans-preamble">${renderLines(preamble, citeMap, turnKey)}</div>`);
+  }
+
+  // Expand all bar — shown when there are multiple sections
+  if (sections.length > 1) {
+    parts.push(`<div class="ans-expand-bar"><button class="ans-expand-all">Expand all</button></div>`);
+  }
+
+  // Sections — all collapsed by default
+  sections.forEach((s, idx) => {
+    const bodyId = `sec-${turnKey}-${idx}`;
+    parts.push(
+      `<div class="ans-section">` +
+        `<button class="ans-section-hd" aria-expanded="false" data-body="${bodyId}">` +
+          `<span class="ans-chevron">&#9654;</span>` +
+          `<span>${inlineTransforms(s.heading, citeMap, turnKey)}</span>` +
+        `</button>` +
+        `<div class="ans-section-body" id="${bodyId}" hidden>` +
+          renderLines(s.lines, citeMap, turnKey) +
+        `</div>` +
+      `</div>`
+    );
+  });
+
+  return parts.join("");
 }
 
 function renderCitations(citations, turnKey) {
@@ -384,6 +435,45 @@ document.addEventListener("keydown", (ev) => {
   const href = el.dataset.href;
   if (href) window.open(href, "_blank", "noopener");
 });
+
+// --- Accordion: section toggle ---
+document.addEventListener("click", (ev) => {
+  const hd = ev.target && ev.target.closest && ev.target.closest(".ans-section-hd");
+  if (!hd) return;
+  const body = document.getElementById(hd.dataset.body);
+  if (!body) return;
+  const expanding = hd.getAttribute("aria-expanded") !== "true";
+  hd.setAttribute("aria-expanded", String(expanding));
+  body.hidden = !expanding;
+  // Keep expand-all label in sync
+  const bar = hd.closest(".turn, .ans-section")?.closest(".turn");
+  syncExpandAll(bar);
+});
+
+// --- Accordion: expand all / collapse all ---
+document.addEventListener("click", (ev) => {
+  const btn = ev.target && ev.target.closest && ev.target.closest(".ans-expand-all");
+  if (!btn) return;
+  const turn = btn.closest(".turn");
+  if (!turn) return;
+  const collapse = btn.textContent.trim() === "Collapse all";
+  turn.querySelectorAll(".ans-section-hd").forEach(hd => {
+    const body = document.getElementById(hd.dataset.body);
+    if (!body) return;
+    hd.setAttribute("aria-expanded", String(!collapse));
+    body.hidden = collapse;
+  });
+  btn.textContent = collapse ? "Expand all" : "Collapse all";
+});
+
+function syncExpandAll(turnEl) {
+  if (!turnEl) return;
+  const btn = turnEl.querySelector(".ans-expand-all");
+  if (!btn) return;
+  const hds = turnEl.querySelectorAll(".ans-section-hd");
+  const allOpen = Array.from(hds).every(h => h.getAttribute("aria-expanded") === "true");
+  btn.textContent = allOpen ? "Collapse all" : "Expand all";
+}
 
 function addTurnEl(query, state) {
   const history = $("history");
