@@ -176,16 +176,29 @@ function escapeHtml(s) {
 // Rules: basename only → locale suffixes → strip FINAL/PROOF → strip 4-digit date codes → underscores→spaces.
 // Extend the locale map as global markets are added.
 function prettyPath(filePath) {
+  // Temp: log raw value so we can tune rules against real corpus paths.
+  console.debug("[sra] prettyPath raw:", filePath);
+
   // 1. Filename only — drop folder segments and extension
-  let name = (filePath || "").split("/").pop().replace(/\.[^.]+$/, "");
+  const basename = (filePath || "").split("/").pop();
+  let name = basename.replace(/\.[^.]+$/, "");
   // 2. Locale suffixes → readable labels  (add new entries here as markets expand)
   name = name.replace(/_ESP\b/gi, " (Spanish)");
   // 3. Strip trailing production suffixes and anything after (FINAL, Final, PROOF, etc.)
-  name = name.replace(/[_ ]+(?:FINAL|Final|PROOF)\b.*$/i, "");
+  //    Only strip when preceded by an underscore or space — avoid eating words
+  //    that merely end in these letters (e.g. "semifinal").
+  name = name.replace(/[_ ]+(?:FINAL|PROOF)\b.*$/i, "");
   // 4. Strip trailing 4-digit date codes (_MMYY)
   name = name.replace(/_\d{4}$/, "");
   // 5. Underscores → spaces, collapse whitespace, trim
-  return name.replace(/_/g, " ").replace(/\s{2,}/g, " ").trim();
+  const result = name.replace(/_/g, " ").replace(/\s{2,}/g, " ").trim();
+  // Fallback: if processing stripped the name to empty, show the raw basename
+  // (minus extension) so something useful always appears.
+  if (!result) {
+    console.warn("[sra] prettyPath returned empty for:", filePath);
+    return basename.replace(/\.[^.]+$/, "").replace(/_/g, " ").trim() || filePath || "?";
+  }
+  return result;
 }
 
 function renderBadge(n, citation, turnKey) {
@@ -275,16 +288,16 @@ function renderLines(lines, citeMap, turnKey) {
 }
 
 // Progressive accordion rendered during streaming (no citations yet).
-// Returns null if no ## headings detected yet — caller falls back to textContent.
-// Completed sections (those before the currently-streaming one) are rendered
-// collapsed so the user can start expanding them immediately.
-// The in-progress section is shown open with a streaming indicator.
+// Returns null until the SECOND ## heading appears — that signals the first
+// section is complete and can be rendered styled. Before that, plain text
+// streams so the user never sees unstyled partial structure.
 function renderProgressiveAccordion(text, turnKey) {
-  // Detect headings without escaping first so we can bail early cheaply.
+  // Cheap pre-check before escaping.
   if (!text.includes("\n## ") && !text.startsWith("## ")) return null;
 
   const lines = escapeHtml(text).split("\n");
-  if (!lines.some(l => /^##\s/.test(l))) return null;
+  const hdCount = lines.filter(l => /^##\s/.test(l)).length;
+  if (hdCount < 2) return null; // wait until first section is fully streamed
 
   const firstHd = lines.findIndex(l => /^##\s/.test(l));
   const preamble = lines.slice(0, firstHd);
