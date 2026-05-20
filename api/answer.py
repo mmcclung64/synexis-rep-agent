@@ -248,6 +248,7 @@ def _rewrite_citations(answer_text: str, hits: List[Hit]) -> tuple[str, List[dic
                 "page_or_slide": md.get("page_or_slide", ""),
                 "source_category": md.get("source_category", ""),
                 "snippet": snippet,
+                "share_url": md.get("share_url", "") or "",
             }
         )
     return rewritten, citations

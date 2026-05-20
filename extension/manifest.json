@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Synexis Rep Agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Knowledge-grounded Q&A for Synexis sales reps, powered by the Synexis Rep Agent API.",
   "icons": {
     "16": "icon16.png",

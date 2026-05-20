@@ -10,7 +10,7 @@ const SESSION_KEY = "sra.session";
 const MAX_HISTORY_TURNS = 8;
 
 // Set to true during corpus rebuilds / Pinecone wipes to block all queries.
-const MAINTENANCE_MODE = true;
+const MAINTENANCE_MODE = false;
 const MAINTENANCE_MESSAGE = "I am currently undergoing maintenance. Please try back later.";
 
 const $ = (id) => document.getElementById(id);
@@ -267,7 +267,10 @@ function renderCitations(citations, turnKey) {
       const page = pageVal !== undefined && pageVal !== null && pageVal !== ""
         ? ` — page/slide ${escapeHtml(String(pageVal))}`
         : "";
-      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(c.file_path || "")}</span><span class="page">${page}</span></div>`;
+      const link = c.share_url
+        ? ` <a class="cite-link" href="${escapeHtml(c.share_url)}" target="_blank" rel="noopener">View document ↗</a>`
+        : "";
+      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(c.file_path || "")}</span><span class="page">${page}</span>${link}</div>`;
     })
     .join("");
   return `<div class="citations"><div class="head">Sources</div>${items}</div>`;

@@ -67,6 +67,7 @@ class Citation(BaseModel):
     page_or_slide: Optional[object] = None
     source_category: Optional[str] = None
     snippet: Optional[str] = None  # first ~200 chars of the source chunk; used for hover tooltips in the client
+    share_url: Optional[str] = None  # HubSpot CDN link for Tier 1/2 content; empty string or None for Tier 3
 
 
 class FeedbackRequest(BaseModel):

@@ -27,13 +27,11 @@
       "default_tier": 2,
       "ingest": true,
       "surface_citations": true,
-      "_comment": "Primary external-shareable folder. Most content is Tier 2 (shareable, not citeable as proof). HubSpot Documents links generated for all Tier 2 items and stored in chunk metadata. Price Sheets and Training Video Scripts are excluded.",
+      "_comment": "Primary external-shareable folder. Most content is Tier 2 (shareable, not citeable as proof). HubSpot Documents links generated for all Tier 2 items and stored in chunk metadata. Price Sheets are excluded.",
       "exclude_patterns": [
         "*Price Sheet*",
         "*Price_Sheet*",
-        "*price sheet*",
-        "*Training Video Script*",
-        "*Training_Video_Script*"
+        "*price sheet*"
       ],
       "content_types": [
         "Customer Facing Master Deck",
@@ -42,11 +40,11 @@
         "Industry Case Studies",
         "Industry Customer Quotes",
         "General Videos",
-        "Industry Videos"
+        "Industry Videos",
+        "Training Video Scripts"
       ],
       "excluded_content_types": [
-        "Industry Price Sheets",
-        "Training Video Scripts"
+        "Industry Price Sheets"
       ],
       "chunking_notes": {
         "Customer Facing Master Deck": "One chunk per slide; prepend slide title. Do not share logo slide.",
@@ -187,7 +185,6 @@
 
   "open_questions": [
     "Product Management Folder: confirm drive_id (MarketingSite or separate drive?) and item_id — last remaining TBD",
-    "Training Video Scripts: excluded pending quiz strip — when stripped, remove from Marketing Approved Collateral exclude_patterns and re-ingest",
     "FAQ: Jimmy to confirm 'latest' version and folder location within Product Management",
     "Patents: Jimmy to confirm if standard folder supplement needed alongside website crawl",
     "Industry Specific Decks: in development — confirm when ready to ingest",

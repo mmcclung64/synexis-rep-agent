@@ -437,6 +437,84 @@ def sync_delta(folder_name: str | None = None) -> None:
             log.info("Delta sync complete for %s — %d changes processed.", folder["name"], changes_processed)
 
 
+def full_ingest(folder_name: str | None = None) -> None:
+    """Enumerate ALL current files in each watched folder and ingest them.
+
+    Uses the Graph delta endpoint from scratch (ignoring any stored token) so
+    it sees every item that currently exists in the folder — not just changes
+    since the last sync. After ingestion, stores a fresh delta token so future
+    incremental --delta runs work correctly.
+
+    This is the right command after a Pinecone wipe or a first-time setup.
+    """
+    folders = get_watched_folders()
+    delta_tokens = _load_delta_tokens()
+
+    for folder in folders:
+        if folder_name and folder["name"] != folder_name:
+            continue
+
+        drive_id = folder["drive_id"]
+        item_id = folder["item_id"]
+        key = f"{drive_id}:{item_id}"
+
+        # Always start from scratch — ignore any stored delta token
+        url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}/delta"
+        log.info("Full ingest %s — enumerating all current files", folder["name"])
+
+        ingested = skipped = errors = 0
+        while url:
+            data = _graph_get(url)
+            items = data.get("value", [])
+
+            for item in items:
+                # Skip folder entries — we only want files
+                if item.get("folder") or item.get("deleted"):
+                    continue
+                name = item.get("name", "")
+                ext = Path(name).suffix.lstrip(".").lower()
+                if ext not in ("pdf", "docx", "pptx"):
+                    log.debug("Full ingest: skipping %s (unsupported extension)", name)
+                    continue
+                if should_exclude(name, folder):
+                    log.info("Full ingest: skipping excluded file %s", name)
+                    skipped += 1
+                    continue
+                log.info("Full ingest: ingesting %s", name)
+                try:
+                    result = ingest_file(
+                        item_id=item["id"],
+                        drive_id=drive_id,
+                        folder_config=folder,
+                        item_name=name,
+                        item_drive_item=item,
+                    )
+                    if result.get("skipped"):
+                        skipped += 1
+                    else:
+                        ingested += 1
+                except Exception as exc:
+                    log.error("Full ingest: error on %s: %s", name, exc)
+                    errors += 1
+
+            next_link = data.get("@odata.nextLink")
+            delta_link = data.get("@odata.deltaLink")
+
+            if delta_link:
+                delta_tokens[key] = delta_link
+                _save_delta_tokens(delta_tokens)
+                url = None
+            elif next_link:
+                url = next_link
+            else:
+                url = None
+
+        log.info(
+            "Full ingest complete for %s — %d ingested, %d skipped, %d errors",
+            folder["name"], ingested, skipped, errors,
+        )
+
+
 def _process_delta_item(item: dict, folder: dict, drive_id: str) -> None:
     """Process a single delta item (created, modified, or deleted)."""
     item_id = item.get("id")
@@ -926,7 +1004,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--force", action="store_true", help="Force re-register even if subscription exists")
     ap.add_argument("--renew", action="store_true", help="Renew all webhook subscriptions")
     ap.add_argument("--delta", action="store_true", help="Run delta sync on watched folders")
-    ap.add_argument("--folder", type=str, default=None, help="Limit --delta to a specific folder by name")
+    ap.add_argument("--full-ingest", action="store_true", help="Enumerate and ingest all current files (use after a Pinecone wipe)")
+    ap.add_argument("--folder", type=str, default=None, help="Limit --delta or --full-ingest to a specific folder by name")
     ap.add_argument("--ingest-item", nargs=3, metavar=("DRIVE_ID", "ITEM_ID", "FOLDER_NAME"),
                     help="Manually ingest a single SharePoint item")
     ap.add_argument("--forget-item", metavar="SP_ITEM_ID",
@@ -948,6 +1027,9 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.delta:
         sync_delta(folder_name=args.folder)
+
+    elif args.full_ingest:
+        full_ingest(folder_name=args.folder)
 
     elif args.ingest_item:
         drive_id, item_id, folder_name = args.ingest_item
