@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.answer import ANTHROPIC_MODEL, get_generator
 from api.input_validator import canned_response, get_validator
+from api.intros import get_intros, refresh_intros_background
 from api.logger import (
     log_event,
     log_feedback_record,
@@ -42,6 +43,7 @@ from api.validators import (
     QueryResponse,
     QueryRewriteInfo,
     _active_partner_keys,
+    _partner_vertical,
     require_partner_key,
 )
 
@@ -426,6 +428,59 @@ def _stream_query(
         # Store in session cache so a repeat query in the same session is instant.
         if _CACHE_ENABLED:
             _cache.set(session_id or body.session_id or "", body.query, final_payload)
+
+
+@app.get("/intros")
+async def intros_get() -> dict:
+    """Return cached vertical intro sentences for the extension.
+
+    Response shape:
+        {
+          "intros": {"Healthcare": "...", "Animal Health": "...", ...},
+          "generated_at": <epoch float>,
+          "stale": <bool>
+        }
+
+    If the cache is missing or stale this call blocks while generating (first
+    cold-start only — in normal operation the cache is always warm).
+    The extension caches the result locally for 12 hours, so this endpoint
+    is hit at most a few times a day per device.
+
+    No partner-key auth required — intros contain no proprietary data and the
+    generation cost is negligible (Haiku).
+    """
+    return get_intros()
+
+
+@app.post("/intros/refresh")
+async def intros_refresh(
+    background_tasks: BackgroundTasks,
+    partner_key: str = Depends(require_partner_key),
+) -> dict:
+    """Kick off a background regeneration of vertical intros.
+
+    Returns 202 immediately; generation runs in a background thread (~10-15 s).
+    Called automatically by the --delta pipeline after a SharePoint sync so
+    intros stay grounded in the latest corpus content.
+    """
+    background_tasks.add_task(refresh_intros_background)
+    log_event("intros.refresh_requested", partner_key=partner_key)
+    return {"ok": True, "message": "Intro refresh started in background"}
+
+
+@app.get("/config")
+async def config(partner_key: str = Depends(require_partner_key)) -> dict:
+    """Return per-partner configuration for the extension.
+
+    Response shape::
+
+        {"default_vertical": "Healthcare"}   # or null for unkeyed / generic partners
+
+    The extension calls this once at startup (cached locally for 24 h) to
+    decide whether to show the focused 3-chip partner picker or the full
+    industry picker.
+    """
+    return {"default_vertical": _partner_vertical(partner_key)}
 
 
 @app.post("/feedback", response_model=FeedbackResponse)

@@ -1,6 +1,7 @@
 """Pydantic request/response schemas and partner-key auth dependency."""
 from __future__ import annotations
 
+import json
 import os
 from typing import List, Literal, Optional
 
@@ -16,6 +17,29 @@ from pydantic import BaseModel, Field
 def _active_partner_keys() -> List[str]:
     raw = os.getenv("PARTNER_KEYS", "") or ""
     return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _partner_vertical(key: str) -> Optional[str]:
+    """Return the default industry vertical for a partner key, or None.
+
+    Reads the ``PARTNER_VERTICALS`` env var, which must be a JSON object
+    mapping partner key strings to vertical label strings.  Example::
+
+        PARTNER_VERTICALS={"hc-alpha-key": "Healthcare", "food-beta-key": "Food Safety"}
+
+    Keys that are absent, empty, or ``"anonymous"`` return ``None`` so the
+    extension falls back to the full industry-picker.
+    """
+    if not key or key == "anonymous":
+        return None
+    raw = os.getenv("PARTNER_VERTICALS", "") or ""
+    if not raw:
+        return None
+    try:
+        mapping = json.loads(raw)
+        return mapping.get(key) or None
+    except (json.JSONDecodeError, AttributeError):
+        return None
 
 
 class HistoryTurn(BaseModel):

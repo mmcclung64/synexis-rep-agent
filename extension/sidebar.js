@@ -13,6 +13,24 @@ const MAX_HISTORY_TURNS = 8;
 const MAINTENANCE_MODE = false;
 const MAINTENANCE_MESSAGE = "I am currently undergoing maintenance. Please try back later.";
 
+// Pre-cached intro text shown instantly when a query is submitted, before the
+// first token arrives from the API. Keyed by the industry-picker value.
+// If the LLM generates a real preamble sentence it streams over this naturally;
+// if it jumps straight to ## sections this text stays visible as the lead-in.
+// Edit these strings to tune tone/depth — no redeployment required, just reload the extension.
+const VERTICAL_INTROS = {
+  "Healthcare": "Synexis DHP® technology addresses the unique infection control demands of healthcare environments — from patient rooms and waiting areas to hallways and HVAC-served zones — delivering continuous, touchless pathogen reduction without chemicals, room downtime, or staff intervention. It's designed to complement your existing infection prevention program, not compete with it. Here's how it works for healthcare:",
+
+  "Animal Health": "Synexis DHP® technology provides continuous, chemical-free pathogen control across veterinary clinics, livestock facilities, and animal care spaces — reducing airborne and surface pathogens 24/7 without harming animals, disrupting workflows, or requiring handler intervention. Here's the full picture for animal health:",
+
+  "Food Safety": "Synexis DHP® technology is purpose-built to complement food safety programs with continuous, touchless pathogen control across both air and surfaces — without leaving chemical residue, disrupting production, or requiring staff intervention. It operates in occupied spaces and runs around the clock, filling the gaps between scheduled sanitation cycles. Here's the full picture for food safety:",
+
+  "Higher Education": "Synexis DHP® technology addresses the air quality and pathogen control challenges unique to dense campus environments — dorms, dining halls, health clinics, classrooms, and rec centers — with continuous, touchless protection that runs in occupied spaces without disrupting campus life. Here's the full picture for higher education:",
+
+  // Fallback for "Other", "I'm interested in everything", or no industry selected
+  "": "Synexis DHP® technology delivers continuous, touchless pathogen control across air and surfaces — complementing existing sanitation programs without chemicals, downtime, or staff intervention. Here's what I found:",
+};
+
 const $ = (id) => document.getElementById(id);
 
 // ---------- settings ----------
@@ -29,6 +47,109 @@ async function loadSettings() {
 
 async function saveSettings(s) {
   await chrome.storage.local.set({ [SETTINGS_KEY]: s });
+}
+
+// ---------- vertical intros (API-fetched, locally cached) ----------
+// The extension fetches fresh intros from GET /intros on startup and caches
+// them in chrome.storage.local for INTROS_TTL_MS. Falls back to the hardcoded
+// VERTICAL_INTROS constant when the API is unreachable or the cache is empty.
+
+const INTROS_CACHE_KEY = "sra.intros";
+const INTROS_TTL_MS    = 12 * 60 * 60 * 1000; // 12 hours
+
+// activeIntros starts as the hardcoded defaults and is swapped out once the
+// API fetch resolves. submit() reads this variable at call time, so any query
+// submitted after the fetch resolves automatically gets the corpus-fresh intros.
+let activeIntros = { ...VERTICAL_INTROS };
+
+async function loadVerticalIntros(settings) {
+  // 1. Check local cache first — avoids a network call if still fresh.
+  try {
+    const { [INTROS_CACHE_KEY]: cached } = await chrome.storage.local.get(INTROS_CACHE_KEY);
+    if (cached && cached.ts && (Date.now() - cached.ts) < INTROS_TTL_MS && cached.data) {
+      activeIntros = { ...VERTICAL_INTROS, ...cached.data };
+      console.debug("[sra] vertical intros: loaded from local cache");
+      return;
+    }
+  } catch (e) {
+    console.debug("[sra] vertical intros: local cache read failed:", e.message);
+  }
+
+  // 2. Fetch from the API.
+  try {
+    const res = await fetch(`${settings.apiUrl}/intros`, {
+      headers: { "Accept": "application/json" },
+    });
+    if (res.ok) {
+      const body = await res.json();
+      const fresh = body.intros || {};
+      if (Object.keys(fresh).length > 0) {
+        activeIntros = { ...VERTICAL_INTROS, ...fresh };
+        await chrome.storage.local.set({ [INTROS_CACHE_KEY]: { ts: Date.now(), data: fresh } });
+        console.debug("[sra] vertical intros: refreshed from API");
+      }
+    } else {
+      console.debug("[sra] vertical intros: API returned", res.status, "— keeping defaults");
+    }
+  } catch (e) {
+    console.debug("[sra] vertical intros: fetch failed (offline?):", e.message);
+  }
+}
+
+// ---------- partner config (API-fetched, locally cached) ----------
+// loadPartnerConfig() fetches GET /config once at startup and caches the
+// result for 24 h.  The response { default_vertical } tells the extension
+// whether to show the focused 3-chip partner picker or the full industry
+// picker.  Falls back to null (full picker) if the key is unset, the API
+// is unreachable, or the partner is not mapped to a vertical.
+
+const PARTNER_CONFIG_KEY     = "sra.partnerConfig";
+const PARTNER_CONFIG_TTL_MS  = 24 * 60 * 60 * 1000; // 24 hours
+
+async function loadPartnerConfig(settings) {
+  // Only attempt if a partner key is configured — anonymous partners always
+  // get null, so we can skip the round-trip.
+  if (!settings.apiKey) return null;
+
+  // 1. Check local cache first.
+  try {
+    const { [PARTNER_CONFIG_KEY]: cached } = await chrome.storage.local.get(PARTNER_CONFIG_KEY);
+    if (
+      cached &&
+      cached.ts &&
+      cached.apiKey === settings.apiKey &&
+      (Date.now() - cached.ts) < PARTNER_CONFIG_TTL_MS &&
+      cached.data
+    ) {
+      console.debug("[sra] partner config: loaded from local cache");
+      return cached.data;
+    }
+  } catch (e) {
+    console.debug("[sra] partner config: local cache read failed:", e.message);
+  }
+
+  // 2. Fetch from API (3-second timeout so a slow cold-start doesn't block init).
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${settings.apiUrl}/config`, {
+      headers: headersFor(settings),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (res.ok) {
+      const data = await res.json();
+      await chrome.storage.local.set({
+        [PARTNER_CONFIG_KEY]: { ts: Date.now(), apiKey: settings.apiKey, data },
+      });
+      console.debug("[sra] partner config: fetched from API:", data);
+      return data;
+    }
+    console.debug("[sra] partner config: API returned", res.status, "— no partner vertical");
+  } catch (e) {
+    console.debug("[sra] partner config: fetch failed:", e.message);
+  }
+  return null;
 }
 
 // ---------- session (multi-turn) ----------
@@ -172,33 +293,70 @@ function escapeHtml(s) {
   ));
 }
 
-// Clean up raw file_path values for display.
-// Rules: basename only → locale suffixes → strip FINAL/PROOF → strip 4-digit date codes → underscores→spaces.
-// Extend the locale map as global markets are added.
-function prettyPath(filePath) {
-  // Temp: log raw value so we can tune rules against real corpus paths.
-  console.debug("[sra] prettyPath raw:", filePath);
+// Known all-caps abbreviations to preserve when title-casing URL path slugs.
+// Extend this list as Synexis expands into new terminology or markets.
+const SLUG_ACRONYMS = new Set([
+  "DHP", "PPB", "HAI", "RTE", "FDA", "EPA", "CDC", "WHO", "USDA",
+  "HACCP", "HVAC", "UV", "AC", "UK", "US",
+]);
 
-  // 1. Filename only — drop folder segments and extension
-  const basename = (filePath || "").split("/").pop();
-  let name = basename.replace(/\.[^.]+$/, "");
-  // 2. Locale suffixes → readable labels  (add new entries here as markets expand)
-  name = name.replace(/_ESP\b/gi, " (Spanish)");
-  // 3. Strip trailing production suffixes and anything after (FINAL, Final, PROOF, etc.)
-  //    Only strip when preceded by an underscore or space — avoid eating words
-  //    that merely end in these letters (e.g. "semifinal").
-  name = name.replace(/[_ ]+(?:FINAL|PROOF)\b.*$/i, "");
-  // 4. Strip trailing 4-digit date codes (_MMYY)
-  name = name.replace(/_\d{4}$/, "");
-  // 5. Underscores → spaces, collapse whitespace, trim
-  const result = name.replace(/_/g, " ").replace(/\s{2,}/g, " ").trim();
-  // Fallback: if processing stripped the name to empty, show the raw basename
-  // (minus extension) so something useful always appears.
-  if (!result) {
-    console.warn("[sra] prettyPath returned empty for:", filePath);
-    return basename.replace(/\.[^.]+$/, "").replace(/_/g, " ").trim() || filePath || "?";
+// Title-case a slug that has already had hyphens/underscores replaced with spaces.
+// Preserves known all-caps abbreviations; capitalises the first letter of everything else.
+function slugToTitle(slug) {
+  return slug
+    .split(" ")
+    .map((w) => {
+      if (!w) return w;
+      return SLUG_ACRONYMS.has(w.toUpperCase())
+        ? w.toUpperCase()
+        : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+// Clean up raw file_path values for display.
+// Handles two formats from the corpus:
+//   - SharePoint files:  "sharepoint/{folder}/{filename.ext}"
+//   - Web pages:         full URLs like "https://synexis.com/products/dhp-devices/"
+// Extend the locale map and SLUG_ACRONYMS as new markets / terminology are added.
+function prettyPath(filePath) {
+  if (!filePath) return "?";
+
+  // Web URL: use URL() to handle trailing slashes, then build a readable breadcrumb
+  // from the last 1–2 non-empty path segments (e.g. "Products › DHP Devices").
+  if (/^https?:\/\//.test(filePath)) {
+    try {
+      const url = new URL(filePath);
+      const segments = url.pathname.split("/").filter(Boolean); // filter removes empty from trailing slash
+      if (segments.length === 0) {
+        return url.hostname.replace(/^www\./, ""); // root URL → just the domain
+      }
+      const crumbs = segments
+        .slice(-2)                                      // up to last 2 segments for context
+        .map((s) => slugToTitle(s.replace(/[-_]/g, " ").replace(/\s{2,}/g, " ").trim()));
+      return crumbs.join(" › ") || url.hostname.replace(/^www\./, "");
+    } catch {
+      // Malformed URL — fall through to basename logic below
+    }
   }
-  return result;
+
+  // File / SharePoint path ("sharepoint/{folder}/{filename.ext}" or plain path).
+  // Use filter(Boolean) so a trailing slash never produces an empty last segment.
+  const parts = filePath.split("/").filter(Boolean);
+  const basename = parts.pop() || filePath;
+  let name = basename.replace(/\.[^.]+$/, ""); // strip extension
+
+  // Locale suffixes → readable labels (add new entries here as markets expand)
+  name = name.replace(/_ESP\b/gi, " (Spanish)");
+  // Strip trailing production suffixes (FINAL, PROOF) and anything that follows.
+  // Requires a preceding underscore/space so "semifinal" is not affected.
+  name = name.replace(/[_ ]+(?:FINAL|PROOF)\b.*$/i, "");
+  // Strip trailing 4-digit date codes (_MMYY)
+  name = name.replace(/_\d{4}$/, "");
+  // Underscores → spaces, collapse whitespace, trim
+  const result = name.replace(/_/g, " ").replace(/\s{2,}/g, " ").trim();
+
+  return result || basename.replace(/\.[^.]+$/, "").trim() || filePath || "?";
 }
 
 function renderBadge(n, citation, turnKey) {
@@ -270,6 +428,14 @@ function renderLines(lines, citeMap, turnKey) {
   while (i < lines.length) {
     const line = lines[i];
     const next = lines[i + 1];
+    // ### sub-headings inside section bodies — styled as H3.
+    // (## headings are consumed by renderAnswer/renderProgressiveAccordion above this level.)
+    if (/^###\s/.test(line)) {
+      const heading = line.replace(/^###\s+/, "");
+      out.push(`<h3>${inlineTransforms(heading, citeMap, turnKey)}</h3>`);
+      i++;
+      continue;
+    }
     if (/\|/.test(line) && next !== undefined && isTableSeparatorRow(next)) {
       const header = line;
       i += 2;
@@ -287,70 +453,6 @@ function renderLines(lines, citeMap, turnKey) {
   return out.join("\n");
 }
 
-// Progressive accordion rendered during streaming (no citations yet).
-// Returns null until the SECOND ## heading appears — that signals the first
-// section is complete and can be rendered styled. Before that, plain text
-// streams so the user never sees unstyled partial structure.
-function renderProgressiveAccordion(text, turnKey) {
-  // Cheap pre-check before escaping.
-  if (!text.includes("\n## ") && !text.startsWith("## ")) return null;
-
-  const lines = escapeHtml(text).split("\n");
-  const hdCount = lines.filter(l => /^##\s/.test(l)).length;
-  if (hdCount < 2) return null; // wait until first section is fully streamed
-
-  const firstHd = lines.findIndex(l => /^##\s/.test(l));
-  const preamble = lines.slice(0, firstHd);
-  const sections = [];
-  let cur = null;
-  for (const line of lines.slice(firstHd)) {
-    if (/^##\s/.test(line)) {
-      if (cur) sections.push({ ...cur, complete: true });
-      cur = { heading: line.replace(/^##\s+/, ""), lines: [] };
-    } else {
-      if (cur) cur.lines.push(line);
-    }
-  }
-  if (cur) sections.push({ ...cur, complete: false }); // last section still streaming
-
-  const citeMap = new Map(); // empty during stream — citations arrive with final event
-  const parts = [];
-
-  if (preamble.some(l => l.trim())) {
-    parts.push(`<div class="ans-preamble">${renderLines(preamble, citeMap, turnKey)}</div>`);
-  }
-
-  if (sections.length > 1) {
-    parts.push(`<div class="ans-expand-bar"><button class="ans-expand-all">Expand all</button></div>`);
-  }
-
-  sections.forEach((s, idx) => {
-    const bodyId = `sec-${turnKey}-${idx}`;
-    if (s.complete) {
-      parts.push(
-        `<div class="ans-section">` +
-          `<button class="ans-section-hd" aria-expanded="false" data-body="${bodyId}">` +
-            `<span class="ans-chevron">&#9654;</span>` +
-            `<span>${inlineTransforms(s.heading, citeMap, turnKey)}</span>` +
-          `</button>` +
-          `<div class="ans-section-body" id="${bodyId}" hidden>${renderLines(s.lines, citeMap, turnKey)}</div>` +
-        `</div>`
-      );
-    } else {
-      // In-progress: visible, no toggle button, cursor blinking to signal streaming
-      parts.push(
-        `<div class="ans-section ans-section-live">` +
-          `<div class="ans-section-hd-static">` +
-            `<span>${inlineTransforms(s.heading, citeMap, turnKey)}</span>` +
-          `</div>` +
-          `<div class="ans-section-body ans-section-body-live">${renderLines(s.lines, citeMap, turnKey)}<span class="ans-cursor"></span></div>` +
-        `</div>`
-      );
-    }
-  });
-
-  return parts.join("");
-}
 
 function renderAnswer(answer, citations, turnKey) {
   const citeMap = new Map();
@@ -412,6 +514,7 @@ function renderAnswer(answer, citations, turnKey) {
 
 function renderCitations(citations, turnKey) {
   if (!citations || citations.length === 0) return "";
+  const bodyId = `cit-${turnKey}`;
   const items = citations
     .map((c) => {
       const pageVal = c.page_or_slide;
@@ -424,7 +527,16 @@ function renderCitations(citations, turnKey) {
       return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(prettyPath(c.file_path || ""))}</span><span class="page">${page}</span>${link}</div>`;
     })
     .join("");
-  return `<div class="citations"><div class="head">Sources</div>${items}</div>`;
+  // Render as a collapsed accordion section, consistent with answer sections.
+  return (
+    `<div class="ans-section ans-section-sources">` +
+      `<button class="ans-section-hd" aria-expanded="false" data-body="${bodyId}">` +
+        `<span class="ans-chevron">&#9654;</span>` +
+        `<span>Sources</span>` +
+      `</button>` +
+      `<div class="ans-section-body" id="${bodyId}" hidden>${items}</div>` +
+    `</div>`
+  );
 }
 
 // Show and position tooltip using fixed coordinates to escape scroll container clipping.
@@ -565,9 +677,11 @@ function addTurnEl(query, state) {
 }
 
 function finalizeTurnEl(turnEl, answer, citations, meta, turnKey) {
-  turnEl.querySelector(".a").innerHTML = renderAnswer(answer || "", citations || [], turnKey);
+  // Citations accordion is appended inside .a so it integrates naturally with
+  // the answer sections and the expand-all / toggle handlers.
   const cits = renderCitations(citations || [], turnKey);
-  if (cits) turnEl.querySelector(".a").insertAdjacentHTML("afterend", cits);
+  turnEl.querySelector(".a").innerHTML =
+    renderAnswer(answer || "", citations || [], turnKey) + cits;
   turnEl.querySelector(".meta").textContent = meta || "";
 }
 
@@ -777,16 +891,27 @@ async function init() {
   $("returnToSend").checked = settings.returnToSend;
   updatePlaceholder(settings.returnToSend);
 
+  // Non-blocking: fetch corpus-fresh vertical intros from the API.
+  // activeIntros is updated in the background; any submit() call after this
+  // resolves automatically picks up the latest intros.
+  loadVerticalIntros(settings);
+
+  // Blocking: fetch partner config so we know which picker to show before rendering.
+  const partnerConfig   = await loadPartnerConfig(settings);
+  const partnerVertical = (partnerConfig && partnerConfig.default_vertical) || null;
+
   $("returnToSend").addEventListener("change", () => {
     updatePlaceholder($("returnToSend").checked);
   });
 
   renderHistoryFromSession(session);
 
-  let _selectedIndustry = "";
+  // Default to the partner vertical so the placeholder is correct for partner sessions.
+  let _selectedIndustry = partnerVertical || "";
 
   function showIndustryPicker() {
     $("empty").style.display = "none";
+    $("partner-picker").style.display = "none";
     $("intent-picker").style.display = "none";
     $("industry-picker").style.display = "";
   }
@@ -794,18 +919,44 @@ async function init() {
   function showIntentPicker(industry) {
     _selectedIndustry = industry;
     $("industry-picker").style.display = "none";
+    $("partner-picker").style.display = "none";
     $("intent-prompt").textContent = industry
       ? `Great. What can I help you with for ${industry}?`
       : "Great. What can I help you with?";
     $("intent-picker").style.display = "";
   }
 
+  // Partner picker — 3-chip focused flow when the partner key maps to a vertical.
+  // Chips: [Vertical overview] [Specific question] [Explore another industry]
+  function showPartnerPicker(vertical) {
+    _selectedIndustry = vertical;
+    $("empty").style.display = "none";
+    $("industry-picker").style.display = "none";
+    $("intent-picker").style.display = "none";
+    $("partner-prompt").textContent = `What can I help you with for ${vertical} today?`;
+    $("partner-chips").innerHTML =
+      `<button class="chip" data-partner-intent="overview" data-industry="${escapeHtml(vertical)}">${vertical} overview</button>` +
+      `<button class="chip" data-partner-intent="question" data-industry="${escapeHtml(vertical)}">I have a specific question</button>` +
+      `<button class="chip chip-dismiss" data-partner-intent="other">Explore another industry</button>`;
+    $("partner-picker").style.display = "";
+  }
+
+  // Show whichever picker is appropriate given whether a partner vertical is set.
+  function showInitialPicker() {
+    if (partnerVertical) {
+      showPartnerPicker(partnerVertical);
+    } else {
+      showIndustryPicker();
+    }
+  }
+
   function hidePickers() {
     $("industry-picker").style.display = "none";
     $("intent-picker").style.display = "none";
+    $("partner-picker").style.display = "none";
   }
 
-  if (session.turns.length === 0) showIndustryPicker();
+  if (session.turns.length === 0) showInitialPicker();
 
   document.querySelectorAll("#industry-picker .chip").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -833,6 +984,29 @@ async function init() {
     $("queryInput").focus();
   });
 
+  // Partner picker chip handler — event-delegated because innerHTML is rebuilt
+  // each time showPartnerPicker() is called.
+  $("partner-chips").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-partner-intent]");
+    if (!btn) return;
+    const intent   = btn.dataset.partnerIntent;
+    const industry = btn.dataset.industry || _selectedIndustry;
+    if (intent === "overview") {
+      _selectedIndustry = industry;
+      hidePickers();
+      const q = `Give me an overview of Synexis products and solutions for ${industry}.`;
+      $("queryInput").value = q;
+      submit();
+    } else if (intent === "question") {
+      _selectedIndustry = industry;
+      hidePickers();
+      $("queryInput").focus();
+    } else if (intent === "other") {
+      // Let them pick from the full industry list; their choice updates _selectedIndustry.
+      showIndustryPicker();
+    }
+  });
+
   $("toggleSettings").addEventListener("click", () => {
     $("settings").classList.toggle("open");
   });
@@ -841,8 +1015,8 @@ async function init() {
     session = await resetSession();
     $("history").innerHTML = "";
     $("empty").style.display = "none";
-    _selectedIndustry = "";
-    showIndustryPicker();
+    _selectedIndustry = partnerVertical || "";
+    showInitialPicker();
     updateTruncationIndicator(session);
   });
 
@@ -918,43 +1092,36 @@ async function init() {
     };
 
     const answerEl = turnEl.querySelector(".a");
+    // Show a vertical-specific intro instantly — visible during the network
+    // round-trip and LLM first-token latency. If the LLM streams a real preamble
+    // it naturally replaces this text; if it jumps straight to ## sections this
+    // stays as the visible lead-in until the sections pop in on final render.
+    // activeIntros is corpus-fresh (fetched from the API at startup); falls back
+    // to the hardcoded VERTICAL_INTROS constant when offline or before the fetch resolves.
+    answerEl.textContent =
+      activeIntros[_selectedIndustry] ?? activeIntros[""];
+
     let streamedText = "";
-    let inAccordionMode = false;
+    let headingsDetected = false; // true once the first ## heading appears in the stream
 
     try {
       const result = await streamQuery(settingsNow, payload, (chunk) => {
         streamedText += chunk;
 
-        // Only attempt accordion rendering at line boundaries (cheaper) and
-        // when we see or already know there are ## headings.
-        const hasHeadings = streamedText.includes("\n## ") || streamedText.startsWith("## ");
-        if (hasHeadings && (chunk.includes("\n") || !inAccordionMode)) {
-          const progressive = renderProgressiveAccordion(streamedText, turnKey);
-          if (progressive !== null) {
-            // Snapshot which sections the user already expanded so we can restore after re-render.
-            const expandedIds = new Set();
-            answerEl.querySelectorAll(".ans-section-hd[aria-expanded='true']").forEach(hd => expandedIds.add(hd.dataset.body));
+        if (headingsDetected) return; // freeze — accordion renders on final event
 
-            inAccordionMode = true;
-            answerEl.innerHTML = progressive;
-
-            // Restore expanded state.
-            if (expandedIds.size > 0) {
-              answerEl.querySelectorAll(".ans-section-hd").forEach(hd => {
-                if (expandedIds.has(hd.dataset.body)) {
-                  hd.setAttribute("aria-expanded", "true");
-                  const body = document.getElementById(hd.dataset.body);
-                  if (body) body.hidden = false;
-                }
-              });
-              syncExpandAll(turnEl);
-            }
-            return;
-          }
+        // Detect first ## heading in the stream.
+        if (streamedText.includes("\n## ") || streamedText.startsWith("## ")) {
+          headingsDetected = true;
+          // If there's a real preamble before the first ##, surface it.
+          // Otherwise leave the placeholder as-is — don't blank the screen.
+          const hdIdx = streamedText.indexOf("\n## ");
+          if (hdIdx > 0) answerEl.textContent = streamedText.slice(0, hdIdx);
+          return;
         }
 
-        // Fall back to plain text while waiting for the first ## heading.
-        if (!inAccordionMode) answerEl.textContent = streamedText;
+        // No headings yet — stream preamble as plain text (replaces placeholder).
+        answerEl.textContent = streamedText;
       });
       const wallMs = Date.now() - started;
       const serverMs = (result.timing && result.timing.total_ms) || null;

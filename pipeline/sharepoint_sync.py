@@ -989,6 +989,28 @@ def _clear_api_cache() -> None:
         log.warning("Could not clear API cache: %s", exc)
 
 
+def _refresh_intros() -> None:
+    """Ask the FastAPI backend to regenerate vertical intro sentences in the background.
+
+    Called at the end of --delta and --full-ingest runs so the extension always
+    shows intros grounded in the latest corpus content.  Fire-and-forget: returns
+    immediately regardless of whether the backend is reachable.
+    """
+    api_url = os.getenv("REP_AGENT_API_URL", "https://synexis-rep-agent.onrender.com")
+    partner_key = os.getenv("PIPELINE_PARTNER_KEY", "")
+    headers = {}
+    if partner_key:
+        headers["Authorization"] = f"Bearer {partner_key}"
+    try:
+        resp = requests.post(f"{api_url}/intros/refresh", headers=headers, timeout=10)
+        if resp.ok:
+            log.info("Intro refresh requested — backend will regenerate in background")
+        else:
+            log.warning("Intro refresh returned %d: %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        log.warning("Could not request intro refresh: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1027,9 +1049,11 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.delta:
         sync_delta(folder_name=args.folder)
+        _refresh_intros()  # regenerate vertical intros from updated corpus
 
     elif args.full_ingest:
         full_ingest(folder_name=args.folder)
+        _refresh_intros()  # regenerate vertical intros from updated corpus
 
     elif args.ingest_item:
         drive_id, item_id, folder_name = args.ingest_item
