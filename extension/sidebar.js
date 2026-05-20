@@ -1113,15 +1113,22 @@ async function init() {
         // Detect first ## heading in the stream.
         if (streamedText.includes("\n## ") || streamedText.startsWith("## ")) {
           headingsDetected = true;
-          // If there's a real preamble before the first ##, surface it.
-          // Otherwise leave the placeholder as-is — don't blank the screen.
+          // Only replace the intro if there's meaningful non-whitespace preamble
+          // before the first ##. A leading \n before the heading is not preamble —
+          // leaving the placeholder visible is better than blanking the screen.
           const hdIdx = streamedText.indexOf("\n## ");
-          if (hdIdx > 0) answerEl.textContent = streamedText.slice(0, hdIdx);
+          if (hdIdx > 0 && streamedText.slice(0, hdIdx).trim()) {
+            answerEl.textContent = streamedText.slice(0, hdIdx).trim();
+          }
           return;
         }
 
-        // No headings yet — stream preamble as plain text (replaces placeholder).
-        answerEl.textContent = streamedText;
+        // No headings yet — replace intro with streaming preamble, but only once
+        // there's actual non-whitespace content so a bare leading \n doesn't
+        // erase the placeholder before the first real token arrives.
+        if (streamedText.trim()) {
+          answerEl.textContent = streamedText;
+        }
       });
       const wallMs = Date.now() - started;
       const serverMs = (result.timing && result.timing.total_ms) || null;
