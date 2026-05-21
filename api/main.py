@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from api.answer import ANTHROPIC_MODEL, get_generator
 from api.input_validator import canned_response, get_validator
 from api.intros import get_intros, refresh_intros_background
+from api.github_logger import append_feedback as _github_append_feedback
 from api.logger import (
     _LOG_DIR,
     log_event,
@@ -500,6 +501,7 @@ async def config(partner_key: str = Depends(require_partner_key)) -> dict:
 @app.post("/feedback", response_model=FeedbackResponse)
 async def feedback(
     body: FeedbackRequest,
+    background_tasks: BackgroundTasks,
     partner_key: str = Depends(require_partner_key),
 ) -> FeedbackResponse:
     """Per-turn feedback submission — 👍/👎 + optional free text. Log-only for
@@ -515,7 +517,7 @@ async def feedback(
         rating=body.rating,
         feedback_chars=len(body.feedback_text or ""),
     )
-    log_feedback_record(
+    record = dict(
         session_id=body.session_id,
         turn_id=body.turn_id,
         user=body.user,
@@ -526,6 +528,9 @@ async def feedback(
         feedback_text=body.feedback_text,
         partner_key=partner_key,
     )
+    log_feedback_record(**record)
+    # Persist to GitHub so feedback survives Render redeploys.
+    background_tasks.add_task(_github_append_feedback, record)
     return FeedbackResponse(ok=True)
 
 
