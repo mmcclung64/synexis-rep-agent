@@ -13,11 +13,12 @@ Environment variables required for email (add to .env):
 """
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -77,28 +78,65 @@ def _get_graph_token() -> Optional[str]:
         return None
 
 
-def send_email(subject: str, body: str, to: str | None = None,
-               dry_run: bool = False) -> bool:
-    """Send a plain-text email via Microsoft Graph API.
+def send_email(subject: str, body: str, to: str | list[str] | None = None,
+               dry_run: bool = False,
+               attachments: Optional[List[Path]] = None,
+               html_body: Optional[str] = None) -> bool:
+    """Send an email via Microsoft Graph API, with optional HTML body and file attachments.
 
     Returns True on success, False on failure. Never raises — callers should
     check the return value and log accordingly.
 
     Args:
-        subject:  Email subject line.
-        body:     Plain-text body.
-        to:       Recipient address. Defaults to NOTIFY_EMAIL env var.
-        dry_run:  If True, prints the email to stdout instead of sending.
+        subject:     Email subject line.
+        body:        Plain-text body (used as fallback if html_body not provided).
+        to:          Recipient address or list of addresses. Defaults to NOTIFY_EMAIL env var.
+        dry_run:     If True, prints the email to stdout instead of sending.
+        attachments: Optional list of Path objects to attach as files.
+        html_body:   Optional HTML body. If provided, overrides plain-text body in the email.
     """
-    recipient = to or NOTIFY_EMAIL
+    if isinstance(to, list):
+        recipients = [r.strip() for r in to if r.strip()]
+    elif to:
+        recipients = [to.strip()]
+    else:
+        recipients = [NOTIFY_EMAIL]
+
     sender = GRAPH_SENDER_EMAIL or NOTIFY_EMAIL
 
+    # Build attachment list for Graph API (base64-encoded file content)
+    attachment_payloads = []
+    for path in (attachments or []):
+        path = Path(path)
+        if not path.exists():
+            print(f"[utils.send_email] Attachment not found, skipping: {path}")
+            continue
+        content_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        # Infer MIME type from extension
+        ext = path.suffix.lower()
+        mime = {
+            ".pdf": "application/pdf",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".txt": "text/plain",
+            ".csv": "text/csv",
+        }.get(ext, "application/octet-stream")
+        attachment_payloads.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": path.name,
+            "contentType": mime,
+            "contentBytes": content_b64,
+        })
+
     if dry_run:
+        att_names = [p.name for p in (attachments or []) if Path(p).exists()]
         print(f"\n{'='*60}")
         print(f"[DRY RUN] Email would be sent via Graph API:")
-        print(f"  From:    {sender}")
-        print(f"  To:      {recipient}")
-        print(f"  Subject: {subject}")
+        print(f"  From:        {sender}")
+        print(f"  To:          {', '.join(recipients)}")
+        print(f"  Subject:     {subject}")
+        if att_names:
+            print(f"  Attachments: {', '.join(att_names)}")
         print(f"  Body:\n{body}")
         print(f"{'='*60}\n")
         return True
@@ -112,14 +150,17 @@ def send_email(subject: str, body: str, to: str | None = None,
         return False
 
     url = _GRAPH_SEND_URL.format(sender=sender)
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": recipient}}],
-        },
-        "saveToSentItems": False,
+    content_type = "HTML" if html_body else "Text"
+    content = html_body if html_body else body
+    message: Dict[str, Any] = {
+        "subject": subject,
+        "body": {"contentType": content_type, "content": content},
+        "toRecipients": [{"emailAddress": {"address": r}} for r in recipients],
     }
+    if attachment_payloads:
+        message["attachments"] = attachment_payloads
+
+    payload = {"message": message, "saveToSentItems": False}
     try:
         resp = requests.post(
             url,
@@ -128,10 +169,11 @@ def send_email(subject: str, body: str, to: str | None = None,
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=20,
+            timeout=30,
         )
         resp.raise_for_status()
-        print(f"[utils.send_email] Sent '{subject}' to {recipient} via Graph API.")
+        att_note = f" + {len(attachment_payloads)} attachment(s)" if attachment_payloads else ""
+        print(f"[utils.send_email] Sent '{subject}'{att_note} to {', '.join(recipients)} via Graph API.")
         return True
     except requests.RequestException as exc:
         print(f"[utils.send_email] Graph API send failed: {exc}")

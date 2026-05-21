@@ -129,6 +129,23 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
 # regardless of territory routing. Unset to enable full team routing.
 ALPHA_OWNER_ID = os.getenv("ALPHA_OWNER_ID", "").strip() or None
 
+# Comma-separated list of digest recipients. Falls back to MARKETING_EMAIL / NOTIFY_EMAIL
+# if not set. Set DIGEST_RECIPIENTS in .env to override.
+_digest_recipients_raw = os.getenv("DIGEST_RECIPIENTS", "").strip()
+DIGEST_RECIPIENTS: list[str] = (
+    [r.strip() for r in _digest_recipients_raw.split(",") if r.strip()]
+    if _digest_recipients_raw
+    else ([MARKETING_EMAIL] if MARKETING_EMAIL else [NOTIFY_EMAIL])
+)
+
+# Directory where weekly brief PDFs are written by generate_brief_pdf.py.
+# Defaults to ~/Desktop/Claude/outbreak-watcher/ — override via BRIEF_OUTPUT_DIR in .env.
+BRIEF_OUTPUT_DIR = Path(
+    os.path.expanduser(
+        os.getenv("BRIEF_OUTPUT_DIR", "~/Desktop/Claude/outbreak-watcher")
+    )
+)
+
 # Vertical → default owner mapping.
 # Used when a matched company has no hubspot_owner_id set.
 # Healthcare is territory-based — company records already carry the correct owner
@@ -776,6 +793,8 @@ def _log_hubspot_task(company_id: str, company_name: str, pathogen: str,
         fh.write(json.dumps(record) + "\n")
 
 
+FALLBACK_OWNER_ID = "162416133"  # Connor Harrison — catches unmatched verticals
+
 def _resolve_owner(owner_id: Optional[str], vertical: str) -> Optional[str]:
     """Return the effective HubSpot owner ID for a task.
 
@@ -783,13 +802,14 @@ def _resolve_owner(owner_id: Optional[str], vertical: str) -> Optional[str]:
       1. ALPHA_OWNER_ID (alpha mode — routes everything to Michael for review)
       2. company-level hubspot_owner_id (already assigned, e.g. DHC territory reps)
       3. VERTICAL_OWNER_MAP fallback (new verticals with no company-level owner)
+      4. FALLBACK_OWNER_ID — Connor Harrison (catches anything not matched above)
     """
     if ALPHA_OWNER_ID:
         return ALPHA_OWNER_ID
     if owner_id:
         return owner_id
     v = (vertical or "").strip().lower()
-    return VERTICAL_OWNER_MAP.get(v)
+    return VERTICAL_OWNER_MAP.get(v) or FALLBACK_OWNER_ID
 
 
 def _hs_create_task(subject: str, body: str, owner_id: Optional[str],
@@ -984,55 +1004,230 @@ def _drop_corpus_markdown(ext: Dict[str, Any], dry_run: bool) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 # Output C — Marketing digest
 # ---------------------------------------------------------------------------
-def _send_digest(items: List[Dict[str, Any]], dry_run: bool) -> bool:
-    if not items:
-        return False
-    recipient = MARKETING_EMAIL or NOTIFY_EMAIL
-    today = _dt.date.today().isoformat()
-    subject = f"Outbreak Intelligence Digest — {today}"
+def _find_latest_brief_pdf() -> Optional[Path]:
+    """Return the most recently modified Pathogen_Outbreak_Brief_*.pdf, or None."""
+    if not BRIEF_OUTPUT_DIR.exists():
+        return None
+    pdfs = sorted(
+        BRIEF_OUTPUT_DIR.glob("Pathogen_Outbreak_Brief_*.pdf"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return pdfs[0] if pdfs else None
 
-    lines = [
-        f"Synexis Rep Agent — Outbreak Intelligence Digest",
-        f"Date: {today}",
-        f"Items: {len(items)}",
-        "",
-    ]
+
+def _tier_badge(tier: int, voc_related: bool) -> str:
+    """Return an HTML badge span for the tier label."""
+    if voc_related:
+        return (
+            '<span style="background:#5A3E8A;color:#fff;padding:2px 8px;border-radius:3px;'
+            'font-size:11px;font-weight:bold;">VOC / Chemical Incident</span>'
+        )
+    if tier == 1:
+        return (
+            '<span style="background:#1B7A3B;color:#fff;padding:2px 8px;border-radius:3px;'
+            'font-size:11px;font-weight:bold;">Tier 1 — Confirmed Efficacy</span>'
+        )
+    return (
+        '<span style="background:#7A5A1B;color:#fff;padding:2px 8px;border-radius:3px;'
+        'font-size:11px;font-weight:bold;">Tier 2 — Possible Efficacy</span>'
+    )
+
+
+def _build_digest_html(items: List[Dict[str, Any]], today: str) -> str:
+    """Build a styled HTML email body for the digest."""
+    BLUE   = "#1B3A6B"
+    ORANGE = "#E8541A"
+    LGRAY  = "#F5F5F5"
+    MGRAY  = "#555555"
+
+    item_blocks = ""
     for i, ext in enumerate(items, 1):
-        geo = ", ".join(ext.get("geography") or []) or "Unspecified"
-        pathogen = ext.get("pathogen") or "Unspecified pathogen"
-        tier = ext.get("_tier", 2)
+        geo        = ", ".join(ext.get("geography") or []) or "Unspecified"
+        pathogen   = ext.get("pathogen") or "Unspecified pathogen"
+        tier       = ext.get("_tier", 2)
         voc_related = ext.get("voc_related", False)
-        vertical = ext.get("affected_vertical") or "affected vertical"
+        vertical   = ext.get("affected_vertical") or "N/A"
+        severity   = ext.get("severity") or "N/A"
+        summary    = ext.get("summary") or ""
+        source_url = ext.get("source_url") or ""
+
         if voc_related:
-            tier_label = "VOC / Chemical Incident"
             campaign_angle = (
                 f"DHP® has demonstrated VOC reduction in controlled environments — "
                 f"relevant outreach opportunity for {vertical} accounts."
             )
         elif tier == 1:
-            tier_label = "Tier 1 — Confirmed efficacy"
             campaign_angle = (
                 f"DHP® has demonstrated efficacy against {pathogen} — "
-                f"outreach relevance for {vertical} accounts."
+                f"a timely reason to reach out to {vertical} accounts."
             )
         else:
-            tier_label = "Tier 2 — Possible efficacy (not yet established)"
             campaign_angle = (
                 f"DHP® may be relevant to {pathogen} — efficacy not yet formally established. "
                 f"Use judgment on outreach to {vertical} accounts."
             )
+
+        source_link = (
+            f'<a href="{source_url}" style="color:{ORANGE};">View source</a>'
+            if source_url else ""
+        )
+        badge = _tier_badge(tier, voc_related)
+        bg = "#fff" if i % 2 else LGRAY
+
+        item_blocks += f"""
+        <tr>
+          <td style="padding:18px 24px;background:{bg};border-bottom:1px solid #e0e0e0;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <span style="font-size:13px;font-weight:bold;color:{BLUE};">
+                    {i}. {pathogen}
+                  </span>
+                  &nbsp;&nbsp;{badge}
+                </td>
+              </tr>
+              <tr><td style="padding-top:8px;">
+                <table cellpadding="0" cellspacing="0" style="font-size:12px;color:{MGRAY};">
+                  <tr>
+                    <td style="padding-right:20px;padding-bottom:4px;">
+                      <b>Geography:</b> {geo}
+                    </td>
+                    <td style="padding-right:20px;padding-bottom:4px;">
+                      <b>Vertical:</b> {vertical}
+                    </td>
+                    <td style="padding-bottom:4px;">
+                      <b>Severity:</b> {severity.capitalize()}
+                    </td>
+                  </tr>
+                </table>
+              </td></tr>
+              <tr><td style="padding-top:6px;font-size:12.5px;color:#333;line-height:1.5;">
+                {summary}
+              </td></tr>
+              <tr><td style="padding-top:10px;">
+                <table width="100%" cellpadding="10" cellspacing="0"
+                       style="background:#FFF8F5;border-left:3px solid {ORANGE};border-radius:2px;">
+                  <tr><td style="font-size:12px;color:#333;">
+                    <b style="color:{ORANGE};">Talking point:</b> {campaign_angle}
+                  </td></tr>
+                </table>
+              </td></tr>
+              {"<tr><td style='padding-top:8px;font-size:11px;'>" + source_link + "</td></tr>" if source_link else ""}
+            </table>
+          </td>
+        </tr>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f0f2f5;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f2f5;padding:24px 0;">
+    <tr><td align="center">
+      <table width="620" cellpadding="0" cellspacing="0"
+             style="background:#fff;border-radius:6px;overflow:hidden;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:{BLUE};padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <div style="font-size:11px;font-weight:bold;color:{ORANGE};
+                              letter-spacing:1px;text-transform:uppercase;">SYNEXIS</div>
+                  <div style="font-size:18px;font-weight:bold;color:#fff;margin-top:4px;">
+                    Outbreak Intelligence Digest
+                  </div>
+                  <div style="font-size:12px;color:#aac4e8;margin-top:2px;">{today}</div>
+                </td>
+                <td align="right" style="vertical-align:bottom;">
+                  <div style="font-size:11px;color:#aac4e8;font-style:italic;">
+                    {len(items)} qualifying item{"s" if len(items) != 1 else ""} this run
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Orange rule -->
+        <tr><td style="background:{ORANGE};height:3px;"></td></tr>
+
+        <!-- Items -->
+        <tr><td style="padding:0;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {item_blocks}
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:{BLUE};padding:14px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:11px;color:#aac4e8;">
+                  Synexis &nbsp;|&nbsp; Touchless, Continuous Pathogen Control
+                  &nbsp;|&nbsp; synexis.com
+                </td>
+                <td align="right" style="font-size:11px;color:#aac4e8;font-style:italic;">
+                  Weekly brief attached
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+
+def _send_digest(items: List[Dict[str, Any]], dry_run: bool) -> bool:
+    if not items:
+        return False
+    today = _dt.date.today().isoformat()
+    subject = f"Outbreak Intelligence Digest — {today}"
+
+    # Plain-text fallback
+    lines = [f"Synexis Outbreak Intelligence Digest — {today}", f"{len(items)} items", ""]
+    for i, ext in enumerate(items, 1):
+        geo      = ", ".join(ext.get("geography") or []) or "Unspecified"
+        pathogen = ext.get("pathogen") or "Unspecified pathogen"
+        tier     = ext.get("_tier", 2)
+        voc      = ext.get("voc_related", False)
+        vertical = ext.get("affected_vertical") or "N/A"
+        tier_label = (
+            "VOC / Chemical Incident" if voc
+            else "Tier 1 — Confirmed efficacy" if tier == 1
+            else "Tier 2 — Possible efficacy"
+        )
         lines += [
-            f"{i}. {pathogen} — {geo}",
-            f"   [{tier_label}]",
-            f"   Vertical: {ext.get('affected_vertical') or 'N/A'}",
-            f"   Severity: {ext.get('severity') or 'N/A'}",
+            f"{i}. {pathogen} — {geo}  [{tier_label}]",
+            f"   Vertical: {vertical} | Severity: {ext.get('severity') or 'N/A'}",
             f"   {ext.get('summary') or ''}",
-            f"   Campaign angle: {campaign_angle}",
             f"   Source: {ext.get('source_url') or ''}",
             "",
         ]
-    body = "\n".join(lines)
-    return send_email(subject, body, to=recipient, dry_run=dry_run)
+    plain_body = "\n".join(lines)
+    html_body  = _build_digest_html(items, today)
+
+    # Attach the most recent weekly brief PDF if available
+    brief_pdf = _find_latest_brief_pdf()
+    if brief_pdf:
+        print(f"[digest] Attaching brief PDF: {brief_pdf.name}")
+    else:
+        print(f"[digest] No brief PDF found in {BRIEF_OUTPUT_DIR} — sending without attachment.")
+
+    return send_email(
+        subject, plain_body,
+        to=DIGEST_RECIPIENTS,
+        dry_run=dry_run,
+        attachments=[brief_pdf] if brief_pdf else None,
+        html_body=html_body,
+    )
 
 
 # ---------------------------------------------------------------------------
