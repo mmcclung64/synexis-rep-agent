@@ -234,6 +234,7 @@ def _build_web_vector(chunk: dict, embedding: List[float]) -> dict:
         "chunk_index":          chunk["chunk_index"],
         "source_category":      chunk["source_category"],
         "intake_mode":          chunk["intake_mode"],
+        "tier":                 4,
         "governance_status":    chunk.get("governance_status", "pending-review"),
         "page_or_slide":        chunk["page_or_slide"],
         "has_efficacy_claim":   chunk["has_efficacy_claim"],

@@ -194,7 +194,7 @@ def _rewrite_citations(answer_text: str, hits: List[Hit]) -> tuple[str, List[dic
     for old_n in referenced_old_ns:
         if 1 <= old_n <= len(hits):
             hit = hits[old_n - 1]
-            tier = (hit.metadata or {}).get("tier", 3)
+            tier = (hit.metadata or {}).get("tier")  # None = no tier stamp (e.g. web crawl chunks)
             if tier == 3:
                 suppressed_old_ns.add(old_n)
             else:

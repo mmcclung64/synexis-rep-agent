@@ -18,6 +18,7 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ from api.answer import ANTHROPIC_MODEL, get_generator
 from api.input_validator import canned_response, get_validator
 from api.intros import get_intros, refresh_intros_background
 from api.logger import (
+    _LOG_DIR,
     log_event,
     log_feedback_record,
     log_query_record,
@@ -525,6 +527,47 @@ async def feedback(
         partner_key=partner_key,
     )
     return FeedbackResponse(ok=True)
+
+
+@app.get("/logs/recent")
+async def logs_recent(
+    partner_key: str = Depends(require_partner_key),
+    event_type: Optional[str] = None,
+    limit: int = 100,
+) -> dict:
+    """Return the most recent log entries from queries.jsonl.
+
+    Query params:
+      event_type  — filter to "query", "feedback", or "rejected" (omit for all)
+      limit       — max number of entries to return (default 100, max 500)
+
+    Auth: any valid partner key.
+    """
+    limit = min(limit, 500)
+    log_path = _LOG_DIR / "queries.jsonl"
+    if not log_path.exists():
+        return {"ok": True, "count": 0, "records": []}
+
+    records = []
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event_type and obj.get("event_type") != event_type:
+                    continue
+                records.append(obj)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read log file: {exc}")
+
+    # Return most-recent first
+    records = records[-limit:][::-1]
+    return {"ok": True, "count": len(records), "records": records}
 
 
 @app.post("/cache/clear")
