@@ -621,9 +621,6 @@ async def graph_notifications(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    notification_count = len(payload.get("value", []))
-    log_event("graph.notification_received", count=notification_count)
-
     # Process asynchronously — Graph requires 202 within a few seconds.
     background_tasks.add_task(_run_notification_processing, payload)
 
