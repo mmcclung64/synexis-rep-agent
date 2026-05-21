@@ -31,6 +31,7 @@ from api.intros import get_intros, refresh_intros_background
 from api.github_logger import append_feedback as _github_append_feedback
 from api.logger import (
     _LOG_DIR,
+    _now_iso,
     log_event,
     log_feedback_record,
     log_query_record,
@@ -518,6 +519,8 @@ async def feedback(
         feedback_chars=len(body.feedback_text or ""),
     )
     record = dict(
+        event_type="feedback",
+        timestamp=_now_iso(),
         session_id=body.session_id,
         turn_id=body.turn_id,
         user=body.user,
@@ -528,7 +531,17 @@ async def feedback(
         feedback_text=body.feedback_text,
         partner_key=partner_key,
     )
-    log_feedback_record(**record)
+    log_feedback_record(
+        session_id=body.session_id,
+        turn_id=body.turn_id,
+        user=body.user,
+        query=body.query,
+        answer=body.answer,
+        citations=[c.model_dump() for c in body.citations],
+        rating=body.rating,
+        feedback_text=body.feedback_text,
+        partner_key=partner_key,
+    )
     # Persist to GitHub so feedback survives Render redeploys.
     background_tasks.add_task(_github_append_feedback, record)
     return FeedbackResponse(ok=True)
