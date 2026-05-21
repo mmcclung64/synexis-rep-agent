@@ -527,7 +527,7 @@ function renderCitations(citations, turnKey) {
         ? ` — page/slide ${escapeHtml(String(pageVal))}`
         : "";
       const link = c.share_url
-        ? ` <a class="cite-link" href="${escapeHtml(c.share_url)}" target="_blank" rel="noopener">View ↗</a>`
+        ? ` <span class="cite-link" role="link" tabindex="0" data-href="${escapeHtml(c.share_url)}">View ↗</span>`
         : "";
       return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(prettyPath(c.file_path || ""))}</span><span class="page">${page}</span>${link}</div>`;
     })
@@ -614,9 +614,12 @@ document.addEventListener("focusout", (ev) => {
   tooltip.style.display = "none";
 });
 
-// Open document link when clicking/entering on tt-path-link spans (can't nest <a> inside cite-badge <a>).
+// Open document link when clicking/entering on tt-path-link or cite-link spans.
+// Both use data-href + window.open so behaviour is consistent across tooltip and Sources.
 document.addEventListener("click", (ev) => {
-  const el = ev.target && ev.target.closest && ev.target.closest(".tt-path-link");
+  const el = ev.target && ev.target.closest && (
+    ev.target.closest(".tt-path-link") || ev.target.closest(".cite-link")
+  );
   if (!el) return;
   ev.preventDefault(); ev.stopPropagation();
   const href = el.dataset.href;
@@ -624,7 +627,9 @@ document.addEventListener("click", (ev) => {
 });
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter" && ev.key !== " ") return;
-  const el = ev.target && ev.target.closest && ev.target.closest(".tt-path-link");
+  const el = ev.target && ev.target.closest && (
+    ev.target.closest(".tt-path-link") || ev.target.closest(".cite-link")
+  );
   if (!el) return;
   ev.preventDefault();
   const href = el.dataset.href;
