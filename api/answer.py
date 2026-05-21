@@ -181,14 +181,24 @@ def _rewrite_citations(answer_text: str, hits: List[Hit]) -> tuple[str, List[dic
     - Renumbers citations sequentially by order of first appearance in the body.
     - Rewrites every `[N]` / `[N, M]` marker in the body to use the new numbering
       (and dedupes within a single marker).
+    - Tier 3 hits (surface_citations=false) are dropped from the citations list and
+      their [N] markers are removed from the answer body. They still contribute as
+      background context but are never surfaced to reps.
     - Returns the rewritten body plus the sorted canonical citations list.
     """
     # Build old-N → hit lookup for every old-N that actually appears in the body.
+    # Tier-3 hits are tracked separately so their markers can be stripped.
     referenced_old_ns = _referenced_citation_numbers(answer_text)
     old_to_hit: Dict[int, Hit] = {}
+    suppressed_old_ns: set = set()  # tier-3: strip markers, exclude from citations
     for old_n in referenced_old_ns:
         if 1 <= old_n <= len(hits):
-            old_to_hit[old_n] = hits[old_n - 1]
+            hit = hits[old_n - 1]
+            tier = (hit.metadata or {}).get("tier", 3)
+            if tier == 3:
+                suppressed_old_ns.add(old_n)
+            else:
+                old_to_hit[old_n] = hit
 
     # Canonical source key → new-N (assigned in order of first appearance).
     source_key_to_new_n: Dict[tuple, int] = {}
@@ -212,7 +222,11 @@ def _rewrite_citations(answer_text: str, hits: List[Hit]) -> tuple[str, List[dic
         for p in parts:
             if not p.isdigit():
                 continue
-            new_n = old_to_new.get(int(p))
+            old_n = int(p)
+            if old_n in suppressed_old_ns:
+                # Tier-3 source — strip the marker entirely, don't surface to reps.
+                continue
+            new_n = old_to_new.get(old_n)
             if new_n is None:
                 # Out-of-range or untracked N — preserve as-is so we don't mask an issue.
                 candidate = p

@@ -175,7 +175,7 @@ function renderBadge(n, citation, turnKey) {
       `<span class="cite-tooltip">` +
         `<span class="tt-path">[${n}] ${path}${pageStr}</span>` +
         (snippet ? `<span class="tt-snippet">${snippet}</span>` : "") +
-        (shareUrl ? `<a class="tt-link" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">View document ↗</a>` : "") +
+        (shareUrl ? `<a class="tt-link" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">View ↗</a>` : "") +
       `</span>` +
     `</a>`
   );
@@ -256,7 +256,7 @@ function renderCitations(citations, turnKey) {
         ? ` — page/slide ${escapeHtml(String(pageVal))}`
         : "";
       const link = c.share_url
-        ? ` <a class="cite-link" href="${escapeHtml(c.share_url)}" target="_blank" rel="noopener">View document ↗</a>`
+        ? ` <a class="cite-link" href="${escapeHtml(c.share_url)}" target="_blank" rel="noopener">View ↗</a>`
         : "";
       return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(c.file_path || "")}</span><span class="page">${page}</span>${link}</div>`;
     })
