@@ -84,6 +84,11 @@ Classify the incoming query into exactly one category:
   and anything ABOUT Synexis the company — revenue, leadership, history,
   acquisitions, employee info. Those are on_topic even when we can't answer
   them; downstream rules route to Synexis support with a canonical phrase.
+  IMPORTANT: Reps often omit the brand — "Sphere", "Blade", "Sentry XL",
+  "DHP" without "Synexis" in front still refer to Synexis products and are
+  on_topic. Size, weight, specs, coverage, mounting, installation questions
+  about any of these devices are on_topic regardless of how the product is
+  named.
 
 - "off_topic" — general-knowledge questions, trivia, coding help, unrelated
   product questions, anything not tied to Synexis, DHP, or infection/microbial
