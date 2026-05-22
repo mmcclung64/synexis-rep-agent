@@ -359,6 +359,15 @@ function prettyPath(filePath) {
   return result || basename.replace(/\.[^.]+$/, "").trim() || filePath || "?";
 }
 
+// Return the best linkable URL for a citation: prefer share_url (HubSpot CDN),
+// fall back to file_path when it is itself a web URL (web-crawl chunks).
+function citationUrl(citation) {
+  if (!citation) return "";
+  if (citation.share_url) return citation.share_url;
+  const fp = citation.file_path || "";
+  return /^https?:\/\//.test(fp) ? fp : "";
+}
+
 function renderBadge(n, citation, turnKey) {
   if (!citation) return `[${n}]`;
   const path = escapeHtml(prettyPath(citation.file_path || ""));
@@ -367,7 +376,7 @@ function renderBadge(n, citation, turnKey) {
     ? ` — page/slide ${escapeHtml(String(page))}`
     : "";
   const snippet = escapeHtml(citation.snippet || "");
-  const shareUrl = citation.share_url || "";
+  const shareUrl = citationUrl(citation);
   // Use <span> not <a> here — cite-badge is already an <a>, so nesting anchors is invalid HTML.
   const pathEl = shareUrl
     ? `<span class="tt-path tt-path-link" role="link" tabindex="0" data-href="${escapeHtml(shareUrl)}">[${n}] ${path}${pageStr}</span>`
@@ -526,8 +535,8 @@ function renderCitations(citations, turnKey) {
       const page = pageVal !== undefined && pageVal !== null && pageVal !== ""
         ? ` — page/slide ${escapeHtml(String(pageVal))}`
         : "";
-      const link = c.share_url
-        ? ` <span class="cite-link" role="link" tabindex="0" data-href="${escapeHtml(c.share_url)}">View ↗</span>`
+      const link = citationUrl(c)
+        ? ` <span class="cite-link" role="link" tabindex="0" data-href="${escapeHtml(citationUrl(c))}">View ↗</span>`
         : "";
       return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(prettyPath(c.file_path || ""))}</span><span class="page">${page}</span>${link}</div>`;
     })
