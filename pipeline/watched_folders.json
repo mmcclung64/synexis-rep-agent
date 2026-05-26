@@ -47,8 +47,19 @@
       "exclude_patterns": [
         "*Price Sheet*",
         "*Price_Sheet*",
-        "*price sheet*"
+        "*price sheet*",
+        "*Module 1D*",
+        "*module 1D*",
+        "*1D*Training*",
+        "*Training*1D*"
       ],
+      "content_type_overrides": {
+        "Customer Facing Master Deck": {
+          "tier": 3,
+          "surface_citations": false,
+          "_comment": "Master pitch deck is background only per Jimmy UAT feedback May 2026 — informs agent framing but is never surfaced or shared with reps."
+        }
+      },
       "content_types": [
         "Customer Facing Master Deck",
         "Industry Specific Decks",
