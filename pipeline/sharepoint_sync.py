@@ -135,6 +135,118 @@ def get_watched_folders(config: dict | None = None) -> list[dict]:
     return folders
 
 
+def get_watched_files(config: dict | None = None) -> list[dict]:
+    """Return individual watched files (not folder-based), with drive aliases resolved."""
+    if config is None:
+        config = load_config()
+    drive_ids = config["drive_ids"]
+    files = []
+    for f in config.get("watched_files", []):
+        if not f.get("ingest", True):
+            log.info("Skipping watched file %s — ingest=false.", f["name"])
+            continue
+        drive_alias = f.get("drive_id", "")
+        entry = dict(f)
+        entry["drive_id"] = drive_ids.get(drive_alias, drive_alias)
+        entry["drive_alias"] = drive_alias
+        files.append(entry)
+    return files
+
+
+def _watched_file_to_folder_config(file_entry: dict) -> dict:
+    """Convert a watched_files entry into a folder_config-compatible dict for ingest_file()."""
+    return {
+        "name": file_entry.get("name", "Watched File"),
+        "drive_id": file_entry["drive_id"],
+        "item_id": file_entry["item_id"],
+        "default_tier": file_entry.get("default_tier", 3),
+        "surface_citations": file_entry.get("surface_citations", False),
+        "exclude_patterns": [],
+        "content_type_overrides": {},
+    }
+
+
+def sync_watched_files_delta(drive_alias: str | None = None) -> None:
+    """Check delta for drives containing watched files and re-ingest changed items.
+
+    Uses a per-drive root delta token (keyed drive_id:root) separate from the
+    per-folder tokens used by sync_delta(). On first run, seeds the token without
+    processing any items (same pattern as sync_delta).
+    """
+    files = get_watched_files()
+    if not files:
+        return
+
+    config = load_config()
+    drive_ids = config["drive_ids"]
+    delta_tokens = _load_delta_tokens()
+
+    # Group watched files by actual drive_id
+    files_by_drive: dict[str, list[dict]] = {}
+    for f in files:
+        files_by_drive.setdefault(f["drive_id"], []).append(f)
+
+    for actual_drive_id, watched in files_by_drive.items():
+        alias = next((k for k, v in drive_ids.items() if v == actual_drive_id), actual_drive_id)
+        if drive_alias and alias != drive_alias:
+            continue
+
+        key = f"{actual_drive_id}:root"
+        watched_by_id = {f["item_id"]: f for f in watched}
+
+        if key in delta_tokens:
+            url = delta_tokens[key]
+            first_run = False
+            log.info("Watched-files delta %s — following stored delta link", alias)
+        else:
+            url = f"{GRAPH_BASE}/drives/{actual_drive_id}/root/delta"
+            first_run = True
+            log.info("Watched-files delta %s — first run, seeding delta token (no files processed)", alias)
+
+        processed = 0
+        while url:
+            data = _graph_get(url)
+            items = data.get("value", [])
+
+            if not first_run:
+                for item in items:
+                    item_id = item.get("id")
+                    if item_id not in watched_by_id:
+                        continue
+                    file_entry = watched_by_id[item_id]
+                    name = item.get("name", file_entry.get("filename", item_id))
+                    if item.get("deleted"):
+                        log.info("Watched file deleted: %s — removing from corpus", name)
+                        forget_file(sp_item_id=item_id, source_path=None)
+                    else:
+                        log.info("Watched file changed: %s — re-ingesting", name)
+                        folder_config = _watched_file_to_folder_config(file_entry)
+                        ingest_file(
+                            item_id=item_id,
+                            drive_id=actual_drive_id,
+                            folder_config=folder_config,
+                            item_name=name,
+                            item_drive_item=item,
+                        )
+                    processed += 1
+
+            next_link = data.get("@odata.nextLink")
+            delta_link = data.get("@odata.deltaLink")
+            if delta_link:
+                delta_tokens[key] = delta_link
+                _save_delta_tokens(delta_tokens)
+                url = None
+            elif next_link:
+                url = next_link
+            else:
+                url = None
+
+        if first_run:
+            log.info("Watched-files delta seed complete for drive %s.", alias)
+        else:
+            log.info("Watched-files delta complete for drive %s — %d items processed.", alias, processed)
+
+
 def should_exclude(filename: str, folder_config: dict) -> bool:
     """Return True if this filename matches any exclude_pattern for the folder."""
     for pat in folder_config.get("exclude_patterns", []):
@@ -284,13 +396,14 @@ def register_all_subscriptions(force: bool = False) -> dict[str, dict]:
     folders = get_watched_folders(config)
     results = {}
 
-    # Collect unique drives needed by confirmed folders
+    # Collect unique drives needed by confirmed folders AND watched files
     needed_drives: dict[str, str] = {}  # alias → actual drive_id
     for folder in folders:
         actual_drive_id = folder["drive_id"]
-        # Find alias for this drive_id
         alias = next((k for k, v in drive_ids.items() if v == actual_drive_id), actual_drive_id)
         needed_drives[alias] = actual_drive_id
+    for wf in get_watched_files(config):
+        needed_drives[wf["drive_alias"]] = wf["drive_id"]
 
     for alias, actual_drive_id in needed_drives.items():
         key = f"drive:{alias}"
@@ -559,11 +672,15 @@ def process_notification(payload: dict) -> None:
     config = load_config()
     drive_ids = config["drive_ids"]  # alias → actual drive_id
     folders = get_watched_folders(config)
+    watched_files = get_watched_files(config)
 
     # Build map: actual_drive_id → [folder, ...]
     folders_by_drive: dict[str, list[dict]] = {}
     for folder in folders:
         folders_by_drive.setdefault(folder["drive_id"], []).append(folder)
+
+    # Build set of drives that have watched_files (for fallback handling)
+    watched_file_drives: set[str] = {wf["drive_id"] for wf in watched_files}
 
     seen_drives: set[str] = set()
 
@@ -587,17 +704,27 @@ def process_notification(payload: dict) -> None:
         seen_drives.add(actual_drive_id)
 
         drive_folders = folders_by_drive.get(actual_drive_id, [])
-        if not drive_folders:
-            log.warning("No watched folders found for drive %s (alias: %s)", actual_drive_id, drive_alias)
+        has_watched_files = actual_drive_id in watched_file_drives
+
+        if not drive_folders and not has_watched_files:
+            log.warning("No watched folders or files found for drive %s (alias: %s)", actual_drive_id, drive_alias)
             continue
 
-        log.info("Notification for drive %s — running delta on %d folder(s)",
-                 drive_alias, len(drive_folders))
-        for folder in drive_folders:
+        if drive_folders:
+            log.info("Notification for drive %s — running delta on %d folder(s)",
+                     drive_alias, len(drive_folders))
+            for folder in drive_folders:
+                try:
+                    sync_delta(folder_name=folder["name"])
+                except Exception as exc:
+                    log.error("Delta sync failed for %s after notification: %s", folder["name"], exc)
+
+        if has_watched_files:
+            log.info("Notification for drive %s — running watched-files delta", drive_alias)
             try:
-                sync_delta(folder_name=folder["name"])
+                sync_watched_files_delta(drive_alias=drive_alias)
             except Exception as exc:
-                log.error("Delta sync failed for %s after notification: %s", folder["name"], exc)
+                log.error("Watched-files delta failed for drive %s after notification: %s", drive_alias, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1049,6 +1176,8 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.delta:
         sync_delta(folder_name=args.folder)
+        if not args.folder:  # watched-files delta doesn't support per-folder filtering
+            sync_watched_files_delta()
         _refresh_intros()  # regenerate vertical intros from updated corpus
 
     elif args.full_ingest:
@@ -1060,9 +1189,16 @@ def main(argv: list[str] | None = None) -> int:
         folders = {f["name"]: f for f in get_watched_folders()}
         folder = folders.get(folder_name)
         if not folder:
-            print(f"ERROR: No confirmed folder config named '{folder_name}'.")
-            print("Available:", list(folders.keys()))
-            return 1
+            # Fall back: check watched_files by name
+            wf_map = {f["name"]: f for f in get_watched_files()}
+            wf_entry = wf_map.get(folder_name)
+            if wf_entry:
+                folder = _watched_file_to_folder_config(wf_entry)
+            else:
+                print(f"ERROR: No confirmed folder or watched file named '{folder_name}'.")
+                print("Folders:", list(folders.keys()))
+                print("Watched files:", list(wf_map.keys()))
+                return 1
         item = _graph_get(f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}")
         result = ingest_file(
             item_id=item_id,
@@ -1090,6 +1226,11 @@ def main(argv: list[str] | None = None) -> int:
             print("\n  PENDING (TBD):")
             for f in skipped:
                 print(f"    {f['name']}")
+        wfiles = get_watched_files()
+        if wfiles:
+            print("\n  WATCHED FILES:")
+            for f in wfiles:
+                print(f"  [{f.get('default_tier')}] {f['name']}  ({f.get('filename', f['item_id'])})  drive={f['drive_alias']}")
     else:
         ap.print_help()
 

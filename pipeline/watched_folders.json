@@ -3,8 +3,22 @@
 
   "drive_ids": {
     "MarketingSite": "b!sALhEjO5wkOXIGt9l_1x1R-hWqA7Hq5Jlbdb6nVGVe4C-DoVCdi6RYqg39lO8pZc",
-    "SalesTeamFiles": "b!Ui736gtBNEGImDNsdasfI5sTKoObYVJLmtRWt35UE2kamsQrtqPUQ5P_h1O6oQuO"
+    "SalesTeamFiles": "b!Ui736gtBNEGImDNsdasfI5sTKoObYVJLmtRWt35UE2kamsQrtqPUQ5P_h1O6oQuO",
+    "ControlledDocuments": "b!0XU9HQVMl0eA_7TYDDnwhtD-_gHNEqJPjqvx3-b7sllMskml2f3MQ5CjVZ5wRQIq"
   },
+
+  "watched_files": [
+    {
+      "name": "Synexis Application Guide",
+      "drive_id": "ControlledDocuments",
+      "item_id": "01FLRS3N5WKNAYIKC3ANGL76UE6VWMFNM5",
+      "filename": "Synexis Application Guide.docx",
+      "default_tier": 3,
+      "surface_citations": false,
+      "ingest": true,
+      "_comment": "Field services deployment/application guide from ControlledDocuments site. Tier 3 = background only — shapes agent answers on device deployment, ADA heights, installation, and application scenarios. Added May 2026 per Michael's request."
+    }
+  ],
 
   "watched_folders": [
     {
