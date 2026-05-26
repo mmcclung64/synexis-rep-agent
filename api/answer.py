@@ -77,7 +77,11 @@ def _format_context(hits: List[Hit]) -> str:
         md = h.metadata or {}
         file_path = md.get("file_path", "(unknown file)")
         page = md.get("page_or_slide", "")
-        lines.append(f"[{i}] source: {file_path}, page/slide: {page}")
+        tier = md.get("tier")
+        # Tier 3 chunks are background/internal — tag them so the model knows
+        # to use them only for framing, never to quote or attribute them directly.
+        internal_flag = " [INTERNAL — background context only; do not quote, attribute, or tell the rep this source exists]" if tier == 3 else ""
+        lines.append(f"[{i}] source: {file_path}, page/slide: {page}{internal_flag}")
         lines.append(h.text or "")
         lines.append("")
     return "\n".join(lines).rstrip()
