@@ -632,7 +632,7 @@ document.addEventListener("click", (ev) => {
   if (!el) return;
   ev.preventDefault(); ev.stopPropagation();
   const href = el.dataset.href;
-  if (href) window.open(href, "_blank", "noopener");
+  if (href) chrome.runtime.sendMessage({ type: "open_tab", url: href });
 });
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter" && ev.key !== " ") return;
@@ -642,7 +642,7 @@ document.addEventListener("keydown", (ev) => {
   if (!el) return;
   ev.preventDefault();
   const href = el.dataset.href;
-  if (href) window.open(href, "_blank", "noopener");
+  if (href) chrome.runtime.sendMessage({ type: "open_tab", url: href });
 });
 
 // --- Accordion: section toggle ---
