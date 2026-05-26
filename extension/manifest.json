@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Synexis Rep Agent",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Knowledge-grounded Q&A for Synexis sales reps, powered by the Synexis Rep Agent API.",
   "icons": {
     "16": "icon16.png",
@@ -16,7 +16,7 @@
       "128": "icon128.png"
     }
   },
-  "permissions": ["sidePanel", "storage"],
+  "permissions": ["sidePanel", "storage", "tabs"],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*",
