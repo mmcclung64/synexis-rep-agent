@@ -29,6 +29,17 @@
       "ingest": true,
       "surface_citations": false,
       "_comment": "Rep Agent > 03 Internal -- not shareable > Training Video Scripts. 6 module video transcripts (1A-1F). Tier 3 = background only — shapes agent baseline tone/framing per Jimmy's direction. Placeholder quiz docs in place until clean transcripts arrive. Covered by existing MarketingSite drive-level webhook.",
+      "_video_tier_note": "Tier split: transcripts = Tier 3 (background only, never surfaced). The shareable Tier 2 counterparts — one Pinecone vector per video pointing to synexis.com/instructional-videos/ — are managed by pipeline/ingest_training_videos.py. Run that script after any major video lineup change. Module 1D is excluded (video is private/deleted; matches *1D* exclude pattern in Marketing Approved Collateral).",
+      "_video_url_catalog": [
+        { "title": "Synexis Sphere Instructional Guide",               "vimeo_id": "1178952643" },
+        { "title": "Synexis Sentry XL Tutorial",                      "vimeo_id": "1178952586" },
+        { "title": "Synexis Sentry XL DHP Animation",                 "vimeo_id": "1154518269" },
+        { "title": "Synexis Sentry XL Instructional Mounting Video",  "vimeo_id": "1178953442" },
+        { "title": "Synexis Blade and Bulb Replacement Guide",        "vimeo_id": "1178953614" },
+        { "title": "Synexis Sphere OUS Instructional Video",          "vimeo_id": "1178952730" },
+        { "title": "Synexis Sphere Mounting Video",                   "vimeo_id": "1178952692" },
+        { "title": "Module 1D (excluded)",                            "vimeo_id": "1148206547", "_note": "Private/deleted on Vimeo — excluded from ingest" }
+      ],
       "exclude_patterns": [],
       "content_types": [
         "Training Video Scripts"
