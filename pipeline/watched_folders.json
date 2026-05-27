@@ -82,7 +82,12 @@
         "Customer Facing Master Deck": {
           "tier": 3,
           "surface_citations": false,
-          "_comment": "Master pitch deck is background only per Jimmy UAT feedback May 2026 — informs agent framing but is never surfaced or shared with reps."
+          "_comment": "Master pitch deck is background only — informs agent framing but is never surfaced or shared with reps. Current file: Synexis Master Pitch Deck Library_0526_Final."
+        },
+        "Training Video Scripts": {
+          "tier": 3,
+          "surface_citations": false,
+          "_comment": "Video script/transcript files in Marketing Approved Collateral are Tier 3 background only. The shareable counterpart is the Tier 2 video URL chunks managed by ingest_training_videos.py."
         }
       },
       "content_types": [

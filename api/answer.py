@@ -81,7 +81,9 @@ def _format_context(hits: List[Hit]) -> str:
         # Tier 3 chunks are background/internal — tag them so the model knows
         # to use them only for framing, never to quote or attribute them directly.
         internal_flag = " [INTERNAL — background context only; do not quote, attribute, or tell the rep this source exists]" if tier == 3 else ""
-        lines.append(f"[{i}] source: {file_path}, page/slide: {page}{internal_flag}")
+        video_url = md.get("video_url", "")
+        video_note = f" [VIDEO LINK: {video_url} — surface this URL to the rep as a shareable video link]" if video_url else ""
+        lines.append(f"[{i}] source: {file_path}, page/slide: {page}{internal_flag}{video_note}")
         lines.append(h.text or "")
         lines.append("")
     return "\n".join(lines).rstrip()

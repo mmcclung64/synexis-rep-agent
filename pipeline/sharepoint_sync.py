@@ -899,6 +899,10 @@ def ingest_file(
         d["tier"] = tier
         d["folder_name"] = folder_name
         d["share_url"] = share_url
+        # Training Video Script chunks carry a video_url so answer.py can surface
+        # the shareable video page to the rep even though the script itself is Tier 3.
+        if folder_name == "Training Video Scripts":
+            d["video_url"] = "https://synexis.com/instructional-videos/"
         chunk_records.append(d)
 
     # ---------- Batch embed + upsert ----------
