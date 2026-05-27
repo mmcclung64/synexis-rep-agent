@@ -113,6 +113,17 @@
       }
     },
     {
+      "name": "Historically Approved - May Require Update - Seek Approval For Use",
+      "drive_id": "MarketingSite",
+      "item_id": "01CCVYLW3S346ZUZIP3RCY4P2ZFYWPXJLS",
+      "default_tier": 3,
+      "ingest": true,
+      "surface_citations": false,
+      "_comment": "Confirmed May 2026. Lives under Marketing Approved Collateral. All content is Tier 3 background only — older collateral that may be outdated; shapes agent knowledge but is never cited or surfaced to reps.",
+      "exclude_patterns": [],
+      "content_types": []
+    },
+    {
       "name": "Product Management Folder",
       "drive_id": "TBD",
       "item_id": "TBD",
