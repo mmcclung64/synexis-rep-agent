@@ -78,12 +78,18 @@ def _format_context(hits: List[Hit]) -> str:
         file_path = md.get("file_path", "(unknown file)")
         page = md.get("page_or_slide", "")
         tier = md.get("tier")
-        # Tier 3 chunks are background/internal — tag them so the model knows
-        # to use them only for framing, never to quote or attribute them directly.
-        internal_flag = " [INTERNAL — background context only; do not quote, attribute, or tell the rep this source exists]" if tier == 3 else ""
+        # Tier 3 chunks are background/internal — anonymize the filename so the
+        # model cannot leak the document name, and tag the chunk so it knows
+        # not to quote, attribute, or acknowledge the source in any way.
+        if tier == 3:
+            display_source = "(internal background source)"
+            internal_flag = " [INTERNAL — background context only; do not quote, attribute, mention the document name, or tell the rep this source exists]"
+        else:
+            display_source = file_path
+            internal_flag = ""
         video_url = md.get("video_url", "")
         video_note = f" [VIDEO LINK: {video_url} — surface this URL to the rep as a shareable video link]" if video_url else ""
-        lines.append(f"[{i}] source: {file_path}, page/slide: {page}{internal_flag}{video_note}")
+        lines.append(f"[{i}] source: {display_source}, page/slide: {page}{internal_flag}{video_note}")
         lines.append(h.text or "")
         lines.append("")
     return "\n".join(lines).rstrip()
