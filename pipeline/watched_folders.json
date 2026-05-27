@@ -24,7 +24,8 @@
     {
       "name": "Training Video Scripts",
       "drive_id": "MarketingSite",
-      "item_id": "01CCVYLWZKCC7VQ6QH7ZCJ567UREUWWAQJ",
+      "item_id": "01CCVYLWYP2GARVSU5PZGLPOYA6XZC2JYR",
+      "_sp_folder_name": "Scripts From Training",
       "default_tier": 3,
       "ingest": true,
       "surface_citations": false,
@@ -120,8 +121,26 @@
       "default_tier": 3,
       "ingest": true,
       "surface_citations": false,
-      "_comment": "Confirmed May 2026. Lives under Marketing Approved Collateral. All content is Tier 3 background only — older collateral that may be outdated; shapes agent knowledge but is never cited or surfaced to reps.",
-      "exclude_patterns": [],
+      "_comment": "Confirmed May 2026. Lives under Marketing Approved Collateral. All content is Tier 3 background only — older collateral that may be outdated; shapes agent knowledge but is never cited or surfaced to reps. Exclusions reviewed May 27 2026: all testimonials, case studies, named-client docs, drafts, and ZZ archive subfolders excluded. Only indisputably clean general marketing content ingested.",
+      "exclude_patterns": [
+        "*Testimonies*",
+        "*Testimonials*",
+        "*Case Study*",
+        "*Case_Study*",
+        "*Business Case*",
+        "*Sports_One Pager*",
+        "*Hospitality_One Pager*",
+        "*AH_Presentation*",
+        "*Synexis_Disc*",
+        "*HVACContractor*"
+      ],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_types": []
     },
     {

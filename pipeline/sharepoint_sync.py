@@ -247,11 +247,19 @@ def sync_watched_files_delta(drive_alias: str | None = None) -> None:
             log.info("Watched-files delta complete for drive %s — %d items processed.", alias, processed)
 
 
-def should_exclude(filename: str, folder_config: dict) -> bool:
-    """Return True if this filename matches any exclude_pattern for the folder."""
+def should_exclude(filename: str, folder_config: dict, parent_path: str = "") -> bool:
+    """Return True if this filename matches any exclude_pattern, or if any
+    exclude_path_keyword appears in the item's SharePoint parent folder path.
+    parent_path should be the parentReference.path value from the Graph API item.
+    """
     for pat in folder_config.get("exclude_patterns", []):
         if fnmatch.fnmatch(filename, pat) or fnmatch.fnmatch(filename.lower(), pat.lower()):
             return True
+    if parent_path:
+        parent_lower = parent_path.lower()
+        for kw in folder_config.get("exclude_path_keywords", []):
+            if kw.lower() in parent_lower:
+                return True
     return False
 
 
@@ -589,8 +597,9 @@ def full_ingest(folder_name: str | None = None) -> None:
                 if ext not in ("pdf", "docx", "pptx"):
                     log.debug("Full ingest: skipping %s (unsupported extension)", name)
                     continue
-                if should_exclude(name, folder):
-                    log.info("Full ingest: skipping excluded file %s", name)
+                parent_path = item.get("parentReference", {}).get("path", "")
+                if should_exclude(name, folder, parent_path):
+                    log.info("Full ingest: skipping excluded file %s (parent: %s)", name, parent_path)
                     skipped += 1
                     continue
                 log.info("Full ingest: ingesting %s", name)
@@ -642,8 +651,9 @@ def _process_delta_item(item: dict, folder: dict, drive_id: str) -> None:
         log.info("Delta: deleted item %s in %s", item_id, folder["name"])
         forget_file(sp_item_id=item_id, source_path=f"sharepoint:{item_id}")
     else:
-        if should_exclude(name, folder):
-            log.info("Delta: skipping excluded file %s", name)
+        parent_path = item.get("parentReference", {}).get("path", "")
+        if should_exclude(name, folder, parent_path):
+            log.info("Delta: skipping excluded file %s (parent: %s)", name, parent_path)
             return
         ext = Path(name).suffix.lstrip(".").lower()
         if ext not in ("pdf", "docx", "pptx"):
@@ -784,6 +794,7 @@ def _build_sp_vector(chunk_data: dict, embedding: list[float]) -> dict:
         "tier": chunk_data.get("tier", 3),
         "folder_name": chunk_data.get("folder_name", ""),
         "share_url": chunk_data.get("share_url", ""),
+        "video_url": chunk_data.get("video_url", ""),
     }
     return {"id": chunk_data["chunk_id"], "values": embedding, "metadata": metadata}
 
@@ -901,8 +912,24 @@ def ingest_file(
         d["share_url"] = share_url
         # Training Video Script chunks carry a video_url so answer.py can surface
         # the shareable video page to the rep even though the script itself is Tier 3.
+        # Per-module URLs come from the _video_url_catalog in watched_folders.json;
+        # fall back to the instructional-videos page for device videos.
         if folder_name == "Training Video Scripts":
-            d["video_url"] = "https://synexis.com/instructional-videos/"
+            catalog = folder_config.get("_video_url_catalog", [])
+            # Match by file stem: "Module 1A - Overview of Synexis & DHP.docx" →
+            # title key contains "1A" — find the catalog entry whose title includes
+            # the same module tag as the file name.
+            stem = Path(item_name).stem  # e.g. "Module 1A - Overview of Synexis & DHP"
+            matched_url = ""
+            for entry in catalog:
+                # Normalize both to lowercase for comparison
+                entry_title = entry.get("title", "").lower()
+                stem_lower = stem.lower()
+                # Match if the stem is contained in the title or vice versa
+                if stem_lower in entry_title or entry_title.replace("synexis ", "") in stem_lower:
+                    matched_url = entry.get("url", "")
+                    break
+            d["video_url"] = matched_url or "https://synexis.com/instructional-videos/"
         chunk_records.append(d)
 
     # ---------- Batch embed + upsert ----------
