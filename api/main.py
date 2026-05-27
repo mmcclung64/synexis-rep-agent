@@ -13,7 +13,9 @@ Start locally:
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -129,6 +131,21 @@ app.add_middleware(
 )
 
 
+_startup_log = logging.getLogger("synexis-rep-agent")
+
+async def _subscription_renewal_loop() -> None:
+    """Renew Graph webhook subscriptions every 48 h. Runs as a background task."""
+    INTERVAL_HOURS = 48
+    while True:
+        await asyncio.sleep(INTERVAL_HOURS * 3600)
+        try:
+            from pipeline.sharepoint_sync import renew_all_subscriptions
+            renew_all_subscriptions()
+            _startup_log.info("subscription_renewal_loop: renewals complete")
+        except Exception as exc:
+            _startup_log.warning("subscription_renewal_loop: renewal failed — %s", exc)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     log_event(
@@ -137,6 +154,15 @@ async def _startup() -> None:
         index=PINECONE_INDEX_NAME,
         auth_configured=bool(_active_partner_keys()),
     )
+    # Renew Graph webhook subscriptions immediately on startup, then every 48 h.
+    # Subscriptions have a 3-day max expiry; this ensures they never lapse.
+    try:
+        from pipeline.sharepoint_sync import renew_all_subscriptions
+        renew_all_subscriptions()
+        _startup_log.info("app.startup: Graph subscriptions renewed")
+    except Exception as exc:
+        _startup_log.warning("app.startup: subscription renewal failed — %s", exc)
+    asyncio.create_task(_subscription_renewal_loop())
 
 
 @app.get("/health", response_model=HealthResponse)

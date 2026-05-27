@@ -467,23 +467,22 @@ def renew_all_subscriptions() -> None:
             new_expiry = renew_subscription(name, sub_id)
             subs[name]["expiration_dt"] = new_expiry
         except Exception as exc:
-            log.error("Failed to renew subscription %s for %s: %s", sub_id, name, exc)
-            if "404" in str(exc):
-                log.warning("Subscription %s not found — re-registering %s", sub_id, name)
-                drive_alias = sub.get("drive_alias") or name.replace("drive:", "")
-                actual_drive_id = needed_drives.get(drive_alias)
-                if actual_drive_id:
-                    try:
-                        new_sub = register_subscription(actual_drive_id, drive_alias)
-                        subs[name] = {
-                            "id": new_sub["id"],
-                            "expiration_dt": new_sub["expirationDateTime"],
-                            "resource": new_sub["resource"],
-                            "drive_id": actual_drive_id,
-                            "drive_alias": drive_alias,
-                        }
-                    except Exception as exc2:
-                        log.error("Re-registration failed for %s: %s", name, exc2)
+            log.warning("Renew failed for %s (%s) — attempting re-registration: %s", name, sub_id, exc)
+            drive_alias = sub.get("drive_alias") or name.replace("drive:", "")
+            actual_drive_id = needed_drives.get(drive_alias)
+            if actual_drive_id:
+                try:
+                    new_sub = register_subscription(actual_drive_id, drive_alias)
+                    subs[name] = {
+                        "id": new_sub["id"],
+                        "expiration_dt": new_sub["expirationDateTime"],
+                        "resource": new_sub["resource"],
+                        "drive_id": actual_drive_id,
+                        "drive_alias": drive_alias,
+                    }
+                    log.info("Re-registered subscription for %s, new id: %s", name, new_sub["id"])
+                except Exception as exc2:
+                    log.error("Re-registration also failed for %s: %s", name, exc2)
     _save_subscriptions(subs)
 
 
