@@ -9,9 +9,9 @@ These are the SHAREABLE counterpart to the Tier 3 transcript chunks that live in
 SharePoint "Training Video Scripts" folder. Transcripts shape agent answers (Tier 3);
 these vectors are what the agent actually surfaces and cites to the rep (Tier 2).
 
-All 7 public videos from synexis.com/instructional-videos/ are included.
-(Video 1148206547 / Module 1D is private/deleted and excluded — matches the *1D* exclude
-pattern already in watched_folders.json for Marketing Approved Collateral.)
+Two catalogs:
+  DEVICE_VIDEOS     — 7 public device instructional videos from synexis.com/instructional-videos/
+  TRAINING_MODULES  — 6 sales training modules (1A–1F), each linked directly to Vimeo
 
 Usage (from repo root):
     python3 -m pipeline.ingest_training_videos            # dry run — shows what would be upserted
@@ -32,15 +32,14 @@ load_dotenv()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Canonical shareable URL — this is what gets cited to the rep
-PAGE_URL = "https://synexis.com/instructional-videos/"
+# Canonical shareable URL for device instructional videos
+DEVICE_VIDEOS_URL = "https://synexis.com/instructional-videos/"
 
 # ---------------------------------------------------------------------------
-# Video catalog
-# (title, vimeo_id, description)
-# Order matches approximate module sequence on the page.
+# Device instructional video catalog — (title, vimeo_id, description)
+# All 7 public videos from synexis.com/instructional-videos/
 # ---------------------------------------------------------------------------
-TRAINING_VIDEOS = [
+DEVICE_VIDEOS = [
     (
         "Synexis Sphere Instructional Guide",
         "1178952643",
@@ -103,27 +102,87 @@ TRAINING_VIDEOS = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Sales training module catalog — (title, vimeo_id, description)
+# Modules 1A–1F; each links directly to its Vimeo URL.
+# ---------------------------------------------------------------------------
+TRAINING_MODULES = [
+    (
+        "Synexis Module 1A - Overview of Synexis & DHP",
+        "1131400283",
+        (
+            "Sales training module 1A. Covers the company overview, what Synexis does, "
+            "and an introduction to DHP® technology — the foundation module for new reps."
+        ),
+    ),
+    (
+        "Synexis Module 1B - Chemistry & Mechanism of DHP",
+        "1140125968",
+        (
+            "Sales training module 1B. Explains the chemistry behind dry hydrogen peroxide, "
+            "how the catalyst generates DHP®, and why the mechanism enables continuous, "
+            "touchless pathogen control in occupied spaces."
+        ),
+    ),
+    (
+        "Synexis Module 1C - Synexis Technology Deployment",
+        "1147794302",
+        (
+            "Sales training module 1C. Covers how Synexis DHP® devices are deployed — "
+            "placement principles, coverage zones, and key deployment variables "
+            "such as ceiling height, airflow, and bioburden."
+        ),
+    ),
+    (
+        "Synexis Module 1D - Industry Applications",
+        "1157385582",
+        (
+            "Sales training module 1D. Reviews Synexis applications across key verticals — "
+            "healthcare, food processing, animal health, poultry, and education. "
+            "Covers vertical-specific value propositions and use cases."
+        ),
+    ),
+    (
+        "Synexis Module 1E - Synexis DHP Efficacy",
+        "1168976249",
+        (
+            "Sales training module 1E. Deep-dive into DHP® efficacy data — study results, "
+            "log reductions, and pathogen-specific findings. Core module for handling "
+            "customer questions about scientific evidence."
+        ),
+    ),
+    (
+        "Synexis Module 1F - DHP, Safe for Occupied Spaces",
+        "1185871358",
+        (
+            "Sales training module 1F. Covers the safety profile of DHP® technology — "
+            "toxicology references, OSHA comparisons, and data supporting use in sensitive "
+            "environments such as NICUs, oncology units, and food processing facilities."
+        ),
+    ),
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _chunk_text(title: str, description: str) -> str:
+def _chunk_text(title: str, description: str, url: str) -> str:
     return (
         f"{title}\n\n"
         f"{description}\n\n"
-        f"Watch this video at: {PAGE_URL}"
+        f"Watch this video at: {url}"
     )
 
 
-def _build_vector(title: str, vimeo_id: str, description: str, embedding: list) -> dict:
-    text = _chunk_text(title, description)
+def _build_vector(title: str, vimeo_id: str, description: str, url: str, embedding: list) -> dict:
+    text = _chunk_text(title, description, url)
     return {
         "id": f"training-video-{vimeo_id}",
         "values": embedding,
         "metadata": {
             "source":             title,
-            "file_path":          PAGE_URL,
+            "file_path":          url,
             "doc_id":             f"training-video-{vimeo_id}",
             "chunk_index":        0,
             "source_category":    "Training Videos",
@@ -169,15 +228,22 @@ def main(argv=None) -> int:
 
     # Embed
     voyage = voyageai.Client(api_key=voyage_key)
-    texts  = [_chunk_text(t, d) for t, _, d in TRAINING_VIDEOS]
+
+    # Build combined catalog: device videos → DEVICE_VIDEOS_URL; modules → individual Vimeo URL
+    all_entries = (
+        [(t, vid, d, DEVICE_VIDEOS_URL) for t, vid, d in DEVICE_VIDEOS] +
+        [(t, vid, d, f"https://vimeo.com/{vid}") for t, vid, d in TRAINING_MODULES]
+    )
+
+    texts = [_chunk_text(t, d, url) for t, _, d, url in all_entries]
 
     print(f"[training_videos] Embedding {len(texts)} video chunks via Voyage …")
     result     = voyage.embed(texts, model="voyage-3", input_type="document")
     embeddings = result.embeddings
 
     vectors = [
-        _build_vector(title, vimeo_id, desc, emb)
-        for (title, vimeo_id, desc), emb in zip(TRAINING_VIDEOS, embeddings)
+        _build_vector(title, vimeo_id, desc, url, emb)
+        for (title, vimeo_id, desc, url), emb in zip(all_entries, embeddings)
     ]
 
     # Preview
@@ -186,7 +252,7 @@ def main(argv=None) -> int:
         marker = "[DRY RUN]" if not args.confirm else "[UPSERT] "
         print(f"  {marker}  {v['id']}")
         print(f"             {v['metadata']['source']}")
-        print(f"             tier=2  surface_citations=True  file_path={PAGE_URL}")
+        print(f"             tier=2  surface_citations=True  file_path={v['metadata']['file_path']}")
         print()
 
     if args.confirm:

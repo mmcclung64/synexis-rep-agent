@@ -29,16 +29,21 @@
       "ingest": true,
       "surface_citations": false,
       "_comment": "Rep Agent > 03 Internal -- not shareable > Training Video Scripts. 6 module video transcripts (1A-1F). Tier 3 = background only — shapes agent baseline tone/framing per Jimmy's direction. Placeholder quiz docs in place until clean transcripts arrive. Covered by existing MarketingSite drive-level webhook.",
-      "_video_tier_note": "Tier split: transcripts = Tier 3 (background only, never surfaced). The shareable Tier 2 counterparts — one Pinecone vector per video pointing to synexis.com/instructional-videos/ — are managed by pipeline/ingest_training_videos.py. Run that script after any major video lineup change. Module 1D is excluded (video is private/deleted; matches *1D* exclude pattern in Marketing Approved Collateral).",
+      "_video_tier_note": "Tier split: transcripts = Tier 3 (background only, never surfaced). The shareable Tier 2 counterparts — one Pinecone vector per video — are managed by pipeline/ingest_training_videos.py. Device instructional videos point to synexis.com/instructional-videos/; training modules (1A-1F) point to individual Vimeo URLs. Run that script after any video lineup change.",
       "_video_url_catalog": [
-        { "title": "Synexis Sphere Instructional Guide",               "vimeo_id": "1178952643" },
-        { "title": "Synexis Sentry XL Tutorial",                      "vimeo_id": "1178952586" },
-        { "title": "Synexis Sentry XL DHP Animation",                 "vimeo_id": "1154518269" },
-        { "title": "Synexis Sentry XL Instructional Mounting Video",  "vimeo_id": "1178953442" },
-        { "title": "Synexis Blade and Bulb Replacement Guide",        "vimeo_id": "1178953614" },
-        { "title": "Synexis Sphere OUS Instructional Video",          "vimeo_id": "1178952730" },
-        { "title": "Synexis Sphere Mounting Video",                   "vimeo_id": "1178952692" },
-        { "title": "Module 1D (excluded)",                            "vimeo_id": "1148206547", "_note": "Private/deleted on Vimeo — excluded from ingest" }
+        { "title": "Synexis Sphere Instructional Guide",               "vimeo_id": "1178952643", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Sentry XL Tutorial",                      "vimeo_id": "1178952586", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Sentry XL DHP Animation",                 "vimeo_id": "1154518269", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Sentry XL Instructional Mounting Video",  "vimeo_id": "1178953442", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Blade and Bulb Replacement Guide",        "vimeo_id": "1178953614", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Sphere OUS Instructional Video",          "vimeo_id": "1178952730", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Sphere Mounting Video",                   "vimeo_id": "1178952692", "url": "https://synexis.com/instructional-videos/" },
+        { "title": "Synexis Module 1A - Overview of Synexis & DHP",   "vimeo_id": "1131400283", "url": "https://vimeo.com/1131400283" },
+        { "title": "Synexis Module 1B - Chemistry & Mechanism of DHP","vimeo_id": "1140125968", "url": "https://vimeo.com/1140125968" },
+        { "title": "Synexis Module 1C - Synexis Technology Deployment","vimeo_id": "1147794302", "url": "https://vimeo.com/1147794302" },
+        { "title": "Synexis Module 1D - Industry Applications",       "vimeo_id": "1157385582", "url": "https://vimeo.com/1157385582" },
+        { "title": "Synexis Module 1E - Synexis DHP Efficacy",        "vimeo_id": "1168976249", "url": "https://vimeo.com/1168976249" },
+        { "title": "Synexis Module 1F - DHP, Safe for Occupied Spaces","vimeo_id": "1185871358", "url": "https://vimeo.com/1185871358" }
       ],
       "exclude_patterns": [],
       "content_types": [
@@ -72,11 +77,7 @@
       "exclude_patterns": [
         "*Price Sheet*",
         "*Price_Sheet*",
-        "*price sheet*",
-        "*Module 1D*",
-        "*module 1D*",
-        "*1D*Training*",
-        "*Training*1D*"
+        "*price sheet*"
       ],
       "content_type_overrides": {
         "Customer Facing Master Deck": {
