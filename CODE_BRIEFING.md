@@ -545,9 +545,7 @@ Two-phase plan. Phase 1 covers rep usage (corpus effectiveness signal). Phase 2 
 - HubSpot Custom Events require a defined schema (`POST /events/v3/event-definitions`) — define once at setup
 - Friction: rep must know prospect email to generate the tracked link (acceptable in a CRM-native workflow)
 
-**Recommended path:** Confirm Sales Hub access first. If available, Option A is cleaner — no redirect layer, no rep friction, native CRM integration. Fall back to Option B if Sales Hub isn't available.
-
-**Open question:** Does Synexis have Sales Hub alongside Marketing Enterprise?
+**Selected path: Option A (Sales Hub Enterprise confirmed).** Option B ruled out. Next step: verify Sales Documents API access on the Synexis portal before building the ingest integration.
 
 ---
 
