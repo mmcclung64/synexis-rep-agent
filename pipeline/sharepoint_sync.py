@@ -1092,11 +1092,21 @@ def _ensure_hubspot_doc(sp_item_id: str, item_name: str, drive_id: str, doc_id: 
 
     file_data = upload_resp.json()
     hs_file_id = file_data.get("id")
-    share_url = file_data.get("defaultHostingUrl") or file_data.get("url") or ""
+    cdn_url = file_data.get("defaultHostingUrl") or file_data.get("url") or ""
 
     if not hs_file_id:
         log.error("HubSpot upload returned no file id: %s", file_data)
         return ""
+
+    # PPTX files force-download in browsers when served as raw CDN links.
+    # Wrap them in the Office Online viewer so reps get an in-browser preview
+    # with a Download button — same UX as the vertical deck summary vectors.
+    if item_name.lower().endswith(".pptx") and cdn_url:
+        from urllib.parse import quote
+        share_url = f"https://view.officeapps.live.com/op/view.aspx?src={quote(cdn_url, safe='')}"
+        log.info("PPTX — using Office Online viewer URL: %s", share_url)
+    else:
+        share_url = cdn_url
 
     log.info("HubSpot file uploaded: id=%s url=%s", hs_file_id, share_url)
 

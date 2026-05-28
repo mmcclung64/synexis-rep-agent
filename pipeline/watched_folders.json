@@ -92,6 +92,10 @@
         "*price sheet*",
         "*Master Pitch Deck Library*"
       ],
+      "exclude_path_keywords": [
+        "Historically Approved",
+        "Scripts From Training"
+      ],
       "content_type_overrides": {
         "Customer Facing Master Deck": {
           "tier": 3,
@@ -137,6 +141,7 @@
       "exclude_patterns": [
         "*Testimonies*",
         "*Testimonials*",
+        "*Testimonial*",
         "*Case Study*",
         "*Case_Study*",
         "*Business Case*",

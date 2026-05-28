@@ -89,6 +89,11 @@ Classify the incoming query into exactly one category:
   on_topic. Size, weight, specs, coverage, mounting, installation questions
   about any of these devices are on_topic regardless of how the product is
   named.
+  IMPORTANT: Synexis sales training resources are on_topic. "Module 1A",
+  "Module 1B", "Module 1C", "Module 1D", "Module 1E", "Module 1F" refer to
+  Synexis internal training modules. Questions about what a module covers,
+  where to find training videos, or what training materials exist for reps
+  are all on_topic.
 
 - "off_topic" — general-knowledge questions, trivia, coding help, unrelated
   product questions, anything not tied to Synexis, DHP, or infection/microbial
