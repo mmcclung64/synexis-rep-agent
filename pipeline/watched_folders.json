@@ -9,6 +9,16 @@
 
   "watched_files": [
     {
+      "name": "Synexis Master Pitch Deck Library",
+      "drive_id": "MarketingSite",
+      "item_id": "01CCVYLWZZFJBQVC7YQRB265KXDINJQO4O",
+      "filename": "Synexis Master Pitch Deck Library_0526_Final.pptx",
+      "default_tier": 3,
+      "surface_citations": false,
+      "ingest": true,
+      "_comment": "Master pitch deck — Tier 3 background only. Excluded from Marketing Approved Collateral folder ingest (exclude_patterns) and ingested here as a watched_file so tier is correctly set. Never cited or surfaced to reps."
+    },
+    {
       "name": "Synexis Application Guide",
       "drive_id": "ControlledDocuments",
       "item_id": "01FLRS3N5WKNAYIKC3ANGL76UE6VWMFNM5",
@@ -78,7 +88,8 @@
       "exclude_patterns": [
         "*Price Sheet*",
         "*Price_Sheet*",
-        "*price sheet*"
+        "*price sheet*",
+        "*Master Pitch Deck Library*"
       ],
       "content_type_overrides": {
         "Customer Facing Master Deck": {
