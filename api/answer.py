@@ -89,7 +89,9 @@ def _format_context(hits: List[Hit]) -> str:
             internal_flag = ""
         video_url = md.get("video_url", "")
         video_note = f" [VIDEO LINK: {video_url} — surface this URL to the rep as a shareable video link]" if video_url else ""
-        lines.append(f"[{i}] source: {display_source}, page/slide: {page}{internal_flag}{video_note}")
+        share_url = md.get("share_url", "") if tier != 3 else ""
+        share_note = f" [SHAREABLE DOCUMENT LINK: {share_url} — offer this link to the rep so they can share this asset with the prospect]" if share_url else ""
+        lines.append(f"[{i}] source: {display_source}, page/slide: {page}{internal_flag}{video_note}{share_note}")
         lines.append(h.text or "")
         lines.append("")
     return "\n".join(lines).rstrip()
