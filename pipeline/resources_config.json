@@ -1,0 +1,24 @@
+{
+  "_comment": "Config for the partner resource library sync (pipeline/sync_resources.py). Intentionally separate from watched_folders.json — this drives file serving to training.synexis.com/resources, not the RAG/embedding pipeline.",
+
+  "sharepoint": {
+    "drive_alias": "SalesTeamFiles",
+    "item_id": "016VCKDATYDURUCWBW25EJPVP463GPI6TR",
+    "folder_name": "Vincit + Synexis Shared Folder",
+    "recursive": true,
+    "exclude_patterns": []
+  },
+
+  "hubspot": {
+    "folder_path": "/Partner Resources"
+  },
+
+  "registry_path": "logs/resources_registry.json",
+
+  "_notes": [
+    "drive_alias resolves via drive_ids in watched_folders.json — SalesTeamFiles = b!Ui736gtBNEGImDNsdasfI5sTKoObYVJLmtRWt35UE2kamsQrtqPUQ5P_h1O6oQuO",
+    "item_id confirmed 2026-05-26 via Graph API lookup on 'Vincit + Synexis Shared Folder'",
+    "Files uploaded as PUBLIC_NOT_INDEXABLE — accessible by direct URL, not indexed by search engines",
+    "Manifest output path passed via --manifest-output CLI arg (defaults to ../../training-quizzes/resources_manifest.json)"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pipeline.chunk)",
+      "Bash(python3 *)",
+      "Bash(curl -sf http://127.0.0.1:8000/health)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/query -H \"Content-Type: application/json\" -d '{\"query\": \"What is DHP and how does it work?\"}')",
+      "Bash(PARTNER_KEYS=\"test-key-1,test-key-2\" RATE_LIMIT_PER_HOUR=3 python3 *)",
+      "Bash(curl -s -o /tmp/r0 -w \"HTTP %{http_code}\\\\n\" -X POST http://127.0.0.1:8000/query -H \"Content-Type: application/json\" -d '{\"query\":\"hello\"}')",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /tmp/r1 -w \"HTTP %{http_code}\\\\n\" -X POST http://127.0.0.1:8000/query -H \"Content-Type: application/json\" -H \"X-Partner-Key: nope\" -d '{\"query\":\"hello\"}')",
+      "Bash(curl -s -o /tmp/rr -w '%{http_code}' -X POST http://127.0.0.1:8000/query -H 'Content-Type: application/json' -H 'X-Partner-Key: test-key-1' -d '{\"query\":\"What is DHP?\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/query -H \"Content-Type: application/json\" -d '{\"query\":\"What is DHP?\"}')",
+      "Bash(kill 46973)",
+      "Bash(xargs -r kill)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/query -H \"Content-Type: application/json\" -d '{\"query\":\"What is Synexis revenue for 2025?\"}')",
+      "Bash(/usr/bin/grep -n \"em>\\\\$1</em>\\\\\\\\|italic\\\\\\\\|\\\\\\\\*\\([^*\\\\\\\\\\\\\\\\n]\" /Users/michaelmcclung/Desktop/Claude/synexis-bot/synexis-rep-agent/api/static/app.js)",
+      "Bash(/usr/bin/grep -n \"word-break\\\\\\\\|overflow-wrap\" /Users/michaelmcclung/Desktop/Claude/synexis-bot/synexis-rep-agent/api/static/index.html)",
+      "Bash(/usr/bin/grep *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git config *)",
+      "Bash(python3 -m pipeline.monitoring.feed_synexis_web --bootstrap --confirm)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(pip install *)",
+      "Bash(curl -sL -A \"Mozilla/5.0\" -o /tmp/promed.xml -w \"HTTP: %{http_code}\\\\nSize: %{size_download}\\\\n\" https://promedmail.org/feed/)",
+      "Bash(curl -sL -A \"Mozilla/5.0\" --max-time 10 \"https://promedmail.org/promed-post/?rss=1\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" --max-time 10 \"https://promedmail.org/api/posts?limit=3\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" --max-time 10 \"https://tools.cdc.gov/api/v2/resources/media/316422.rss\")"
+    ]
+  }
+}
