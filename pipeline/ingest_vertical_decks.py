@@ -21,6 +21,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import voyageai
 from dotenv import load_dotenv
@@ -116,6 +117,12 @@ VERTICAL_DECKS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _office_viewer_url(pptx_url: str) -> str:
+    """Wrap a public .pptx URL in the Microsoft Office Online viewer so it opens
+    in a browser tab instead of downloading. Revert to the raw URL if needed."""
+    return f"https://view.officeapps.live.com/op/view.aspx?src={quote(pptx_url, safe='')}"
+
+
 def _chunk_text(title: str, description: str, share_url: str) -> str:
     return (
         f"{title}\n\n"
@@ -177,7 +184,13 @@ def main(argv=None) -> int:
 
     voyage = voyageai.Client(api_key=voyage_key)
 
-    texts = [_chunk_text(title, desc, share_url) for _, title, _fp, share_url, desc in VERTICAL_DECKS]
+    # Wrap share_urls in Office Online viewer so links open in browser, not download
+    entries = [
+        (slug, title, file_path, _office_viewer_url(share_url), desc)
+        for slug, title, file_path, share_url, desc in VERTICAL_DECKS
+    ]
+
+    texts = [_chunk_text(title, desc, share_url) for _, title, _fp, share_url, desc in entries]
 
     print(f"[vertical_decks] Embedding {len(texts)} deck summary chunks via Voyage …")
     result     = voyage.embed(texts, model="voyage-3", input_type="document")
@@ -185,7 +198,7 @@ def main(argv=None) -> int:
 
     vectors = [
         _build_vector(slug, title, file_path, share_url, desc, emb)
-        for (slug, title, file_path, share_url, desc), emb in zip(VERTICAL_DECKS, embeddings)
+        for (slug, title, file_path, share_url, desc), emb in zip(entries, embeddings)
     ]
 
     print()
