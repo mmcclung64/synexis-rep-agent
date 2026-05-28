@@ -496,6 +496,61 @@ A minimal admin panel alongside the existing `/ui` route. Displays all `pending-
 
 ## Planned Capabilities (Post-Beta)
 
+### Asset Engagement Tracking [PLANNED — post-Beta]
+
+Two-phase plan. Phase 1 covers rep usage (corpus effectiveness signal). Phase 2 covers prospect engagement (sales-motion intelligence). Build in order.
+
+---
+
+#### Phase 1 — Rep click tracking (extension → backend log)
+
+**Goal:** Know which surfaced assets reps actually open. Answers: is retrieval working? Which documents are resonating? Which are never clicked despite being surfaced?
+
+**Extension changes (`sidebar.js`):**
+- Add a `fireCiteClick(citation)` helper that POSTs to `/events` alongside the existing `window.open` navigation
+- Trigger on all cite-link click handlers (`.cite-link`, `.tt-path-link`)
+- Payload: `event_type: "cite_click"`, `partner_key`, `session_id`, `user`, `turn_id`, `file_path`, `share_url`, `source_category`, `tier`, `timestamp`
+
+**Backend changes (`api/main.py`):**
+- New `POST /events` endpoint — accepts any structured event dict, logs to GitHub (`logs/events_log.jsonl`) via the same Contents API pattern as `github_logger.py`
+- No auth beyond `X-Partner-Key` header (same as `/query`)
+
+**Analysis surface:**
+- `logs/events_log.jsonl` in GitHub — queryable by file_path or source_category
+- Add `cite_click` summary to the weekly pathogen brief scheduled task (top-5 most-clicked assets in the period)
+
+**Implementation notes:**
+- Fire-and-forget — `cite_click` POST should not block or delay link open; use `fetch()` with no `await`
+- If the POST fails, swallow silently — click tracking is not user-facing
+- `turn_id` links the click back to the specific query that surfaced the asset (join with `queries.jsonl`)
+
+---
+
+#### Phase 2 — Prospect engagement tracking (HubSpot)
+
+**Goal:** Know when a prospect opens a document a rep shared with them. Shows in contact CRM timeline.
+
+**Architecture depends on HubSpot tier:**
+
+**Option A — Sales Hub (Sales Documents API):**
+- At ingest, create a HubSpot Sales Document for each Tier 1/2 asset (`POST /sales-platform/v1/documents`)
+- Sales Documents generate a per-share tracking link when a rep sends them — opens are attributed to the contact and appear in CRM timeline automatically
+- Store `hs_document_id` in Pinecone metadata; agent surfaces the document link alongside `share_url`
+- Note: Sales Documents API (`/sales-platform/v1/documents`) was not publicly available as of May 2026 — confirm access before building
+
+**Option B — Marketing Enterprise (Custom Events + redirect layer):**
+- At ingest, generate a unique token per asset; store in Pinecone metadata as `tracking_token`
+- Add `GET /r/{token}` redirect endpoint to the backend — logs a HubSpot Custom Event against the contact (requires prospect email as a query param: `/r/{token}?e={encoded_email}`)
+- Rep includes the tracked URL when sharing; prospect clicks → backend logs → HubSpot Custom Event fires → shows in contact timeline
+- HubSpot Custom Events require a defined schema (`POST /events/v3/event-definitions`) — define once at setup
+- Friction: rep must know prospect email to generate the tracked link (acceptable in a CRM-native workflow)
+
+**Recommended path:** Confirm Sales Hub access first. If available, Option A is cleaner — no redirect layer, no rep friction, native CRM integration. Fall back to Option B if Sales Hub isn't available.
+
+**Open question:** Does Synexis have Sales Hub alongside Marketing Enterprise?
+
+---
+
 ### Email Drafting Capability [PLANNED — post-Beta]
 
 Reps ask: *"Help me draft a follow-up email to the hospital EVS director we met last week"* or *"Draft an email sharing the healthcare one-pager."* The agent composes a ready-to-send draft, grounded in approved corpus content, that the rep pastes directly into their email client.
