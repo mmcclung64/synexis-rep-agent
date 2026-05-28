@@ -39,6 +39,23 @@ MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "1024"))
 RETRIEVE_TOP_N = 12      # pull this many from rerank before dedup
 CONTEXT_MAX_CHUNKS = 8   # pass this many to Claude after dedup
 
+# Email drafts need more room — bump max_tokens for those requests.
+EMAIL_MAX_TOKENS = int(os.getenv("EMAIL_MAX_TOKENS", "1500"))
+
+# Regex that identifies "please draft/write/compose an email…" intent.
+# Intentionally broad: the validator already gates off-topic queries, so false
+# positives here just get a slightly higher token budget — not a problem.
+_EMAIL_INTENT_RE = re.compile(
+    r"(?:draft|write|compose|help\s+me\s+(?:write|draft|compose)|create)\s+(?:a\s+|an\s+|the\s+)?(?:\w+\s+)?email"
+    r"|email\s+(?:draft|template|to\s+(?:a\s+)?(?:prospect|customer|lead|contact))"
+    r"|cold\s+(?:intro|outreach|email)"
+    r"|post[- ]?meeting\s+(?:follow[- ]?up|email)"
+    r"|follow[- ]?up\s+email"
+    r"|re[- ]?engagement\s+email"
+    r"|draft.*email.*(?:prospect|customer|lead)",
+    re.IGNORECASE,
+)
+
 # Multi-turn sizing.
 MAX_HISTORY_TURNS = 8        # Alpha: simple last-N truncation (sliding-window summarization deferred to Beta)
 # Rough context-window size for Sonnet 4.6; used only to report context_utilization
@@ -305,12 +322,12 @@ class AnswerGenerator:
             self._system_prompt = _read_system_prompt()
 
     @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=20))
-    def _claude_call(self, messages: List[dict]) -> tuple[str, Optional[int]]:
+    def _claude_call(self, messages: List[dict], max_tokens: Optional[int] = None) -> tuple[str, Optional[int]]:
         """Call Claude with the full messages array and return (text, input_tokens)."""
         self._ensure_ready()
         resp = self._anthropic.messages.create(
             model=ANTHROPIC_MODEL,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens if max_tokens is not None else MAX_TOKENS,
             # Prompt caching for the system prompt — it's constant across queries.
             system=[
                 {
@@ -328,14 +345,14 @@ class AnswerGenerator:
             input_tokens = getattr(usage, "input_tokens", None)
         return "".join(parts).strip(), input_tokens
 
-    def _claude_stream(self, messages: List[dict]):
+    def _claude_stream(self, messages: List[dict], max_tokens: Optional[int] = None):
         """Yield (text_delta, final_message) pairs. text_delta is a str chunk until
         the stream completes, then one final call yields (None, final_message).
         """
         self._ensure_ready()
         with self._anthropic.messages.stream(
             model=ANTHROPIC_MODEL,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens if max_tokens is not None else MAX_TOKENS,
             system=[
                 {
                     "type": "text",
@@ -403,6 +420,11 @@ class AnswerGenerator:
                 "sparse_ms": retrieve_timings.get("sparse_ms", 0),
             }
 
+        # 4b. Detect email-drafting intent — used for max_tokens override and
+        #     the email_draft flag in the response (tells the extension to render
+        #     an email card with a Copy button instead of the standard answer card).
+        is_email = bool(_EMAIL_INTENT_RE.search(query))
+
         if not hits:
             return {
                 "answer": (
@@ -413,6 +435,7 @@ class AnswerGenerator:
                 "context_chunks": [],
                 "history_turns_used": 0,
                 "context_utilization": None,
+                "email_draft": False,
                 "rewrite": rewrite_payload,
                 "timing": _timing(generation_ms=0),
             }
@@ -429,8 +452,10 @@ class AnswerGenerator:
         ]
 
         # 5. Claude call — wrapped for generation_ms timing.
+        #    Email drafts get a higher token budget so the full draft fits.
         t_gen = _time.time()
-        raw_answer, input_tokens = self._claude_call(messages)
+        call_max_tokens = EMAIL_MAX_TOKENS if is_email else None
+        raw_answer, input_tokens = self._claude_call(messages, max_tokens=call_max_tokens)
         generation_ms = int((_time.time() - t_gen) * 1000)
 
         # 6. Strip Claude's own Sources section — the client renders one canonical
@@ -461,6 +486,7 @@ class AnswerGenerator:
             ],
             "history_turns_used": len(sanitized),
             "context_utilization": context_utilization,
+            "email_draft": is_email,
             "rewrite": rewrite_payload,
             "timing": _timing(generation_ms=generation_ms),
         }
@@ -498,6 +524,9 @@ class AnswerGenerator:
             if summary:
                 hits = (summary[:1] + non_summary)[:CONTEXT_MAX_CHUNKS]
 
+        # Email-drafting intent detection (mirrors generate())
+        is_email = bool(_EMAIL_INTENT_RE.search(query))
+
         rewrite_payload = {
             "original": rewrite.original,
             "rewritten": rewrite.rewritten,
@@ -528,6 +557,7 @@ class AnswerGenerator:
                 "citations": [],
                 "history_turns_used": 0,
                 "context_utilization": None,
+                "email_draft": False,
                 "rewrite": rewrite_payload,
                 "timing": _timing(0),
             }
@@ -540,11 +570,12 @@ class AnswerGenerator:
             {"role": "user", "content": new_user_message}
         ]
 
-        # Stream deltas as they arrive.
+        # Stream deltas as they arrive. Email drafts get higher token budget.
+        call_max_tokens = EMAIL_MAX_TOKENS if is_email else None
         t_gen = _time.time()
         accumulated: List[str] = []
         final_message = None
-        for text_delta, fin in self._claude_stream(messages):
+        for text_delta, fin in self._claude_stream(messages, max_tokens=call_max_tokens):
             if text_delta is not None:
                 accumulated.append(text_delta)
                 yield {"type": "delta", "text": text_delta}
@@ -571,6 +602,7 @@ class AnswerGenerator:
             "citations": citations,
             "history_turns_used": len(sanitized),
             "context_utilization": context_utilization,
+            "email_draft": is_email,
             "rewrite": rewrite_payload,
             "timing": _timing(generation_ms),
         }
