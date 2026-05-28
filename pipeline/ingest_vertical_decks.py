@@ -37,6 +37,7 @@ VERTICAL_DECKS = [
     (
         "animal-health",
         "Intro to Synexis - Animal Health",
+        "Marketing Approved Collateral/Intro to Synexis _Animal Health_0526.pptx",
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis%20_Animal%20Health_0526.pptx",
         (
             "Overview and introduction to Synexis DHP® technology for the Animal Health vertical. "
@@ -53,6 +54,7 @@ VERTICAL_DECKS = [
     (
         "healthcare",
         "Intro to Synexis - Healthcare",
+        "Marketing Approved Collateral/Intro to Synexis _Healthcare_0526.pptx",
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis%20_Healthcare_0526.pptx",
         (
             "Overview and introduction to Synexis DHP® technology for the Healthcare vertical. "
@@ -70,6 +72,7 @@ VERTICAL_DECKS = [
     (
         "poultry",
         "Intro to Synexis - Poultry",
+        "Marketing Approved Collateral/Intro to Synexis _Poultry_0526.pptx",
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis%20_Poultry_0526.pptx",
         (
             "Overview and introduction to Synexis DHP® technology for the Poultry vertical. "
@@ -89,6 +92,7 @@ VERTICAL_DECKS = [
     (
         "food-processing",
         "Intro to Synexis - Food Processing / Food Safety",
+        "Marketing Approved Collateral/Intro to Synexis_Food Processing_0526.pptx",
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis_Food%20Processing_0526.pptx",
         (
             "Overview and introduction to Synexis DHP® technology for the Food Processing and "
@@ -120,14 +124,14 @@ def _chunk_text(title: str, description: str, share_url: str) -> str:
     )
 
 
-def _build_vector(slug: str, title: str, share_url: str, description: str, embedding: list) -> dict:
+def _build_vector(slug: str, title: str, file_path: str, share_url: str, description: str, embedding: list) -> dict:
     text = _chunk_text(title, description, share_url)
     return {
         "id": f"vertical-deck-{slug}",
         "values": embedding,
         "metadata": {
             "source":             title,
-            "file_path":          share_url,
+            "file_path":          file_path,
             "share_url":          share_url,
             "doc_id":             f"vertical-deck-{slug}",
             "chunk_index":        0,
@@ -173,15 +177,15 @@ def main(argv=None) -> int:
 
     voyage = voyageai.Client(api_key=voyage_key)
 
-    texts = [_chunk_text(title, desc, url) for _, title, url, desc in VERTICAL_DECKS]
+    texts = [_chunk_text(title, desc, share_url) for _, title, _fp, share_url, desc in VERTICAL_DECKS]
 
     print(f"[vertical_decks] Embedding {len(texts)} deck summary chunks via Voyage …")
     result     = voyage.embed(texts, model="voyage-3", input_type="document")
     embeddings = result.embeddings
 
     vectors = [
-        _build_vector(slug, title, url, desc, emb)
-        for (slug, title, url, desc), emb in zip(VERTICAL_DECKS, embeddings)
+        _build_vector(slug, title, file_path, share_url, desc, emb)
+        for (slug, title, file_path, share_url, desc), emb in zip(VERTICAL_DECKS, embeddings)
     ]
 
     print()
@@ -189,6 +193,7 @@ def main(argv=None) -> int:
         marker = "[DRY RUN]" if not args.confirm else "[UPSERT] "
         print(f"  {marker}  {v['id']}")
         print(f"             {v['metadata']['source']}")
+        print(f"             file_path={v['metadata']['file_path']}")
         print(f"             tier=2  surface_citations=True")
         print(f"             share_url={v['metadata']['share_url']}")
         print()
