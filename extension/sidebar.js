@@ -360,6 +360,15 @@ function prettyPath(filePath) {
   return result || basename.replace(/\.[^.]+$/, "").trim() || filePath || "?";
 }
 
+// Return the best human-readable display name for a citation.
+// Prefers the stored title (set for training videos and named sources) over
+// the path-derived label, so "Synexis Module 1D - Industry Applications"
+// shows instead of the raw Vimeo ID.
+function displayName(citation) {
+  if (citation && citation.title) return citation.title;
+  return prettyPath((citation && citation.file_path) || "");
+}
+
 // Return the best linkable URL for a citation: prefer share_url (HubSpot CDN),
 // fall back to file_path when it is itself a web URL (web-crawl chunks).
 function citationUrl(citation) {
@@ -371,7 +380,7 @@ function citationUrl(citation) {
 
 function renderBadge(n, citation, turnKey) {
   if (!citation) return `[${n}]`;
-  const path = escapeHtml(prettyPath(citation.file_path || ""));
+  const path = escapeHtml(displayName(citation));
   const page = citation.page_or_slide;
   const pageStr = page !== undefined && page !== null && page !== ""
     ? ` — page/slide ${escapeHtml(String(page))}`
@@ -539,7 +548,7 @@ function renderCitations(citations, turnKey) {
       const link = citationUrl(c)
         ? ` <span class="cite-link" role="link" tabindex="0" data-href="${escapeHtml(citationUrl(c))}">View ↗</span>`
         : "";
-      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(prettyPath(c.file_path || ""))}</span><span class="page">${page}</span>${link}</div>`;
+      return `<div class="cite" id="src-${turnKey}-${c.n}"><span class="n">[${c.n}]</span> <span class="path">${escapeHtml(displayName(c))}</span><span class="page">${page}</span>${link}</div>`;
     })
     .join("");
   // Render as a collapsed accordion section, consistent with answer sections.
@@ -551,6 +560,40 @@ function renderCitations(citations, turnKey) {
       `</button>` +
       `<div class="ans-section-body" id="${bodyId}" hidden>${items}</div>` +
     `</div>`
+  );
+}
+
+// Parse **Subject:** line out of an email draft answer string.
+// Returns { subject, body } where body is everything after the subject line.
+function _parseEmailDraft(answer) {
+  const m = (answer || "").match(/^\*\*Subject:\*\*\s*(.+)/m);
+  if (!m) return { subject: "", body: (answer || "").trim() };
+  const subject = m[1].trim();
+  const idx = (answer || "").indexOf(m[0]);
+  const body = (answer || "").slice(idx + m[0].length).trim();
+  return { subject, body };
+}
+
+// Render an email draft as a distinct card with Copy button.
+// The Copy button is wired by finalizeTurnEl() after innerHTML is set.
+function renderEmailDraft(answer, citations, turnKey) {
+  const { subject, body } = _parseEmailDraft(answer);
+  const uid = `email-${turnKey}`;
+  const subjectRow = subject
+    ? `<div class="email-draft-subject"><span class="email-draft-subject-label">Subject:</span>${escapeHtml(subject)}</div>`
+    : "";
+  const cits = renderCitations(citations || [], turnKey);
+  return (
+    `<div class="email-draft-card">` +
+      `<div class="email-draft-header">✉&nbsp; Draft</div>` +
+      subjectRow +
+      `<div class="email-draft-body">${escapeHtml(body)}</div>` +
+      `<div class="email-draft-actions">` +
+        `<button class="email-copy-btn" id="${uid}-copy" type="button">Copy email</button>` +
+        `<span class="email-copy-status" id="${uid}-status"></span>` +
+      `</div>` +
+    `</div>` +
+    cits
   );
 }
 
@@ -696,12 +739,38 @@ function addTurnEl(query, state) {
   return div;
 }
 
-function finalizeTurnEl(turnEl, answer, citations, meta, turnKey, fallbackPreamble) {
-  // Citations accordion is appended inside .a so it integrates naturally with
-  // the answer sections and the expand-all / toggle handlers.
-  const cits = renderCitations(citations || [], turnKey);
-  turnEl.querySelector(".a").innerHTML =
-    renderAnswer(answer || "", citations || [], turnKey, fallbackPreamble) + cits;
+function finalizeTurnEl(turnEl, answer, citations, meta, turnKey, fallbackPreamble, emailDraft) {
+  const aEl = turnEl.querySelector(".a");
+  if (emailDraft) {
+    aEl.innerHTML = renderEmailDraft(answer || "", citations || [], turnKey);
+    // Wire Copy button — must happen after innerHTML is set.
+    const uid = `email-${turnKey}`;
+    const copyBtn = aEl.querySelector(`#${uid}-copy`);
+    const copyStatus = aEl.querySelector(`#${uid}-status`);
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        const { subject, body } = _parseEmailDraft(answer || "");
+        const text = subject ? `Subject: ${subject}\n\n${body}` : body;
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = "Copied!";
+          copyBtn.classList.add("copied");
+          setTimeout(() => {
+            copyBtn.textContent = "Copy email";
+            copyBtn.classList.remove("copied");
+          }, 2000);
+        } catch {
+          if (copyStatus) copyStatus.textContent = "Copy failed — select manually";
+        }
+      });
+    }
+  } else {
+    // Citations accordion is appended inside .a so it integrates naturally with
+    // the answer sections and the expand-all / toggle handlers.
+    const cits = renderCitations(citations || [], turnKey);
+    aEl.innerHTML =
+      renderAnswer(answer || "", citations || [], turnKey, fallbackPreamble) + cits;
+  }
   turnEl.querySelector(".meta").textContent = meta || "";
 }
 
@@ -834,6 +903,8 @@ function renderHistoryFromSession(session) {
         assistantTurn.context_utilization,
       ),
       turnKey,
+      undefined,
+      assistantTurn.email_draft || false,
     );
     turnKey++;
     i += 1;
@@ -1172,6 +1243,7 @@ async function init() {
         ),
         turnKey,
         VERTICAL_INTROS[_selectedIndustry] ?? VERTICAL_INTROS[""],
+        result.email_draft || false,
       );
       attachFeedbackControls(turnEl, {
         query: q,
@@ -1193,6 +1265,7 @@ async function init() {
         citations: result.citations || [],
         query_time_ms: serverMs,
         context_utilization: result.context_utilization,
+        email_draft: result.email_draft || false,
       });
       await saveSession(session);
       updateTruncationIndicator(session);
