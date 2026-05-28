@@ -370,6 +370,16 @@ class AnswerGenerator:
         # 3. Dedup across copy-pasted slide decks
         hits = _dedup_by_text(raw_hits)[:CONTEXT_MAX_CHUNKS]
 
+        # 4a. Early-turn vertical boost: on turns 0–1 (orientation phase), promote
+        #     the highest-scoring is_vertical_summary chunk to slot 1 so Claude leads
+        #     with the overview deck or one-pager rather than a specific slide chunk.
+        turn_number = len(_sanitize_history(history or []))
+        if turn_number <= 1:
+            summary = [h for h in hits if (h.metadata or {}).get("is_vertical_summary")]
+            non_summary = [h for h in hits if not (h.metadata or {}).get("is_vertical_summary")]
+            if summary:
+                hits = (summary[:1] + non_summary)[:CONTEXT_MAX_CHUNKS]
+
         rewrite_payload = {
             "original": rewrite.original,
             "rewritten": rewrite.rewritten,
@@ -479,6 +489,14 @@ class AnswerGenerator:
         retrieve_timings = dict(retriever.last_timings)
 
         hits = _dedup_by_text(raw_hits)[:CONTEXT_MAX_CHUNKS]
+
+        # Early-turn vertical boost (mirrors generate())
+        turn_number = len(_sanitize_history(history or []))
+        if turn_number <= 1:
+            summary = [h for h in hits if (h.metadata or {}).get("is_vertical_summary")]
+            non_summary = [h for h in hits if not (h.metadata or {}).get("is_vertical_summary")]
+            if summary:
+                hits = (summary[:1] + non_summary)[:CONTEXT_MAX_CHUNKS]
 
         rewrite_payload = {
             "original": rewrite.original,
