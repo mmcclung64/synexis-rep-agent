@@ -46,7 +46,7 @@ EMAIL_MAX_TOKENS = int(os.getenv("EMAIL_MAX_TOKENS", "1500"))
 # Intentionally broad: the validator already gates off-topic queries, so false
 # positives here just get a slightly higher token budget — not a problem.
 _EMAIL_INTENT_RE = re.compile(
-    r"(?:draft|write|compose|help\s+me\s+(?:write|draft|compose)|create)\s+(?:a\s+|an\s+|the\s+)?(?:\w+\s+)?email"
+    r"(?:draft|write|compose|help\s+me\s+(?:write|draft|compose)|create)\b.{0,50}\bemail\b"
     r"|email\s+(?:draft|template|to\s+(?:a\s+)?(?:prospect|customer|lead|contact))"
     r"|cold\s+(?:intro|outreach|email)"
     r"|post[- ]?meeting\s+(?:follow[- ]?up|email)"
