@@ -92,9 +92,12 @@ Classify the incoming query into exactly one category:
   named.
   IMPORTANT: Sales strategy and business case questions are on_topic — ROI,
   value proposition, cost justification, objection handling, how to pitch to
-  a specific role or industry. A rep asking "what are the ROI drivers for
-  equine vets?" is asking a Synexis sales question, not a general finance
-  question.
+  a specific role or industry, and meeting/prospect preparation. A rep asking
+  "what are the ROI drivers for equine vets?" or "prepare me for a meeting
+  with a major league sports team" is asking a Synexis sales question. Any
+  request to prepare for, practice, or think through a conversation with a
+  prospect type is on_topic — the rep is always asking in a Synexis sales
+  context.
   IMPORTANT: Synexis sales training resources are on_topic. "Module 1A",
   "Module 1B", "Module 1C", "Module 1D", "Module 1E", "Module 1F" refer to
   Synexis internal training modules. Questions about what a module covers,
