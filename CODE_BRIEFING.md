@@ -496,6 +496,125 @@ A minimal admin panel alongside the existing `/ui` route. Displays all `pending-
 
 ## Planned Capabilities (Post-Beta)
 
+### Email Drafting Capability [PLANNED — post-Beta]
+
+Reps ask: *"Help me draft a follow-up email to the hospital EVS director we met last week"* or *"Draft an email sharing the healthcare one-pager."* The agent composes a ready-to-send draft, grounded in approved corpus content, that the rep pastes directly into their email client.
+
+---
+
+#### Architecture decision: /query vs. /draft endpoint
+
+**Option A — Handle in /query (recommended starting point)**
+
+The email request arrives as a normal turn, often after a conversation that already established the vertical, prospect type, and content discussed. The system prompt detects email intent and switches output format. No new endpoint, no routing logic. Prior conversation history is automatically available as context — critical for "draft a follow-up about what we just discussed."
+
+Trade-off: generation parameters (max_tokens, temperature) are shared with Q&A. Email drafts may want higher max_tokens (emails are longer). Mitigate by raising `ANSWER_MAX_TOKENS` slightly (1,024 → 1,500) or detecting email intent in `answer.py` and overriding inline.
+
+**Option B — New /draft endpoint**
+
+Cleaner separation: dedicated request schema (adds `prospect_role`, `email_type`, `prior_context` fields), separate generation settings, easier to log and eval independently. Higher implementation cost. Revisit if Option A proves structurally awkward — specifically if the system prompt email rules start conflicting with Q&A rules.
+
+**Recommendation:** Start with Option A. Move to Option B if email volume justifies it or if rule conflicts emerge.
+
+---
+
+#### Trigger detection
+
+**Validator** — add email drafting to the on-topic clause alongside ROI and meeting prep. *"Draft an email to a prospect"* is always a Synexis sales question.
+
+**System prompt rule (new Rule N)** — detect email intent and switch output format:
+
+Trigger phrases: "draft an email", "write an email", "help me write", "compose a message", "follow-up email", "email to prospect", "email introducing", "send them something".
+
+When triggered:
+1. If prospect context is missing (role, vertical, or purpose unclear), ask one clarifying question before drafting: *"Who are you sending this to and what's the main goal — intro, follow-up, or content share?"*
+2. Once context is sufficient, draft the email in the format below.
+3. Never generate the email and then ask for confirmation — draft on first complete request.
+
+---
+
+#### Email types
+
+| Type | Trigger | Primary corpus draw |
+|---|---|---|
+| Cold intro | "introducing Synexis to…" | Vertical one-pager, intro deck |
+| Post-meeting follow-up | "follow up after our meeting / call" | Whatever was discussed in prior turns |
+| Content share | "send them the one-pager / study" | Specific Tier 2 asset + share_url |
+| Objection response | "they pushed back on safety / cost" | Safety data, peer-reviewed studies |
+| Re-engagement | "reaching back out after 3 months" | Vertical value prop, new content |
+
+---
+
+#### Output format
+
+```
+**Subject:** [one line — specific to content, no efficacy claims in subject]
+
+Hi [Name / "there" if no name given],
+
+[Opening — 1-2 sentences, reference the context (meeting, call, vertical) without sounding scripted]
+
+[Value paragraph — 2-3 sentences grounded in corpus content, consultative tone]
+
+[Asset reference — if a shareable document is relevant: "I've attached / linked our [one-pager / overview deck] — [one sentence on why it's relevant to them specifically]."]
+
+[CTA — single, specific: "Happy to walk through it on a quick call" or "Let me know if you have questions on the data"]
+
+Best,
+[Rep Name from extension settings]
+```
+
+**Length target:** 150–250 words. Shorter than most sales emails. Respects the prospect's time.
+
+---
+
+#### Email-specific guardrails (additions to system prompt)
+
+- **No concentration figures in email body** — not PPB, not ppm, not "single-digit." Safety framing stays qualitative: "designed for continuous use in occupied spaces." The PPB conversation belongs in a meeting, not written communication.
+- **No efficacy percentages in the subject line** — subject lines with "99% reduction" look like spam and make claims that can't be contextualized.
+- **Only Tier 1/2 assets with share_url may be linked** — never link an internal document or reference a source the prospect can't access.
+- **No competitive technology names** — same rule as Q&A.
+- **No named internal contacts** — same rule as Q&A; route to "your Synexis team" if escalation is needed.
+- **One CTA only** — multiple asks in a sales email reduce response rates. Agent picks the most appropriate one.
+- **No generic closers** — "Let me know if you have any questions!" is forbidden. Same tone standard as Q&A answers.
+
+---
+
+#### Extension UX
+
+**Recommendation: distinct email card with Copy button.**
+
+The email draft should be visually distinct from a Q&A answer — reps need to immediately recognize it as a ready-to-send artifact, not a response to read. Proposed treatment:
+
+- Card with a subtle envelope icon and "Draft" label in the header
+- Subject line rendered in a shaded box, clearly labeled
+- Body in a scrollable white card area
+- **"Copy email"** button that puts the full email (subject + body) on the clipboard, formatted for pasting
+- Thumbs up/down still present (email quality feedback is valuable)
+
+**Implementation notes:**
+- `answer.py` returns an `email_draft: true` flag in the response when email intent was detected — extension uses this to choose the card renderer
+- `sidebar.js` adds `renderEmailDraft()` alongside `renderAnswer()` — same streaming delta accumulation, different final render
+- Copy button uses `navigator.clipboard.writeText()` with a "Copied!" flash state
+- Rep name pulled from `chrome.storage.local` `sra.userName` (already stored for the user identity feature)
+
+---
+
+#### Logging
+
+Add `email_draft: true` to the query log record when email intent is detected. Enables downstream analysis of email drafting usage separate from Q&A usage. No schema change required — the existing log entry supports arbitrary fields.
+
+---
+
+#### What's NOT in scope (v1)
+
+- Direct send from the sidebar (requires Gmail / Outlook integration — post-v1)
+- Template library (email drafts are always generated fresh from context)
+- Prospect name auto-fill from CRM (HubSpot integration — post-v1)
+- Email thread analysis ("here's their last email, how should I respond?")
+
+---
+
 ### Nightly trade press sweep [DEFERRED — post-Beta]
 Add a nightly scheduled task that searches a defined list of trade publications (*Infection Prevention Today*, *APIC*, *Food Safety News*, etc.) for articles matching relevant keywords (DHP, dry hydrogen peroxide, infection prevention, HAI, food safety, bioburden, etc.). Fetches full text of any hits, drops them into `source_content/` with status `pending-governance`, and sends a notification (email or Slack) summarizing what was found. Governance review (Nick / Richelle / Jimmy) approves items before they're ingested into the corpus. Requires a news/web search API — Google News API, NewsAPI.org, or Exa are candidate options. Fits cleanly into the existing drop-folder pipeline architecture. No web access added to the agent itself — sweep is a separate upstream process.
 
