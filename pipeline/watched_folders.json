@@ -65,13 +65,14 @@
       }
     },
     {
-      "name": "Brand Assets and Regulations",
+      "name": "Brand Message Guidelines",
       "drive_id": "MarketingSite",
-      "item_id": "01CCVYLW6NVMDAJWCCNBC37FJHSV53ZDA7",
+      "item_id": "01CCVYLW2YJVXLVFBRTRAKB6LU3WIENNPC",
+      "_sp_folder_name": "2025 Brand Message Guidelines",
       "default_tier": 3,
       "ingest": true,
       "surface_citations": false,
-      "_comment": "Brand guidelines shape agent tone/rails but are never cited or surfaced to reps. Tier 3 = background only. Consider encoding key rules directly in system prompt rather than RAG.",
+      "_comment": "Scoped to the '2025 Brand Message Guidelines' subfolder only — NOT the Brand Assets and Regulations root. Brand guidelines shape agent tone/rails but are never cited or surfaced to reps. Tier 3 = background only. Root folder (Brand Assets) intentionally excluded — logos, business cards, templates, etc. are not part of the corpus.",
       "exclude_patterns": [],
       "content_types": [
         "Brand Message Guidelines"
