@@ -348,6 +348,7 @@ function prettyPath(filePath) {
 
   // Locale suffixes → readable labels (add new entries here as markets expand)
   name = name.replace(/_ESP\b/gi, " (Spanish)");
+  name = name.replace(/_ENG\b/gi, ""); // strip redundant English suffix
   // Strip trailing production suffixes (FINAL, PROOF) and anything that follows.
   // Requires a preceding underscore/space so "semifinal" is not affected.
   name = name.replace(/[_ ]+(?:FINAL|PROOF)\b.*$/i, "");
