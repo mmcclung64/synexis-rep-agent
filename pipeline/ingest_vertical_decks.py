@@ -85,18 +85,21 @@ VERTICAL_DECKS = [
     ),
     (
         "food-processing",
-        "Intro to Synexis - Food Processing",
+        "Intro to Synexis - Food Processing / Food Safety",
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis_Food%20Processing_0526.pptx",
         (
-            "Overview and introduction to Synexis DHP® technology for the Food Processing "
-            "vertical. Covers the value proposition for processing facilities, packaging areas, "
-            "cold storage, dry storage, and employee/common spaces in food manufacturing. "
-            "Topics include: what Synexis technology does, how DHP® provides continuous "
-            "touchless pathogen control in occupied food processing environments, efficacy data "
-            "for Listeria, Salmonella, E. coli, and other food safety pathogens, food safety "
-            "compliance framing, device lineup and placement guidance, and rep talking points "
-            "for Food Processing prospect conversations. Use this deck as the primary shareable "
-            "resource for Food Processing vertical introductions and overview conversations."
+            "Overview and introduction to Synexis DHP® technology for the Food Processing and "
+            "Food Safety vertical. This deck is the primary shareable resource for both Food "
+            "Processing and Food Safety vertical conversations. Covers the value proposition for "
+            "food processing facilities, food safety programs, packaging areas, cold storage, "
+            "dry storage, and employee/common spaces in food manufacturing. Topics include: what "
+            "Synexis technology does, how DHP® provides continuous touchless pathogen control in "
+            "occupied food processing and food safety environments, efficacy data for Listeria, "
+            "Salmonella, E. coli, and other food safety pathogens, food safety compliance and "
+            "HACCP framing, device lineup and placement guidance, and rep talking points for "
+            "Food Processing and Food Safety prospect conversations. Use this deck as the primary "
+            "shareable resource for Food Processing and Food Safety vertical introductions and "
+            "overview conversations."
         ),
     ),
 ]
