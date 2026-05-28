@@ -79,7 +79,8 @@ Classify the incoming query into exactly one category:
 
 - "on_topic" — a question a Synexis sales rep would legitimately ask: DHP
   technology, products (Sphere, Sentry XL, Blade), deployment, efficacy,
-  studies, competitors, verticals (healthcare, food, education, etc.),
+  studies, competitors, verticals (healthcare, food safety, food processing,
+  education, animal health, veterinary, equine, poultry, hospitality, etc.),
   compliance, pricing (will be declined downstream but is still on-topic),
   and anything ABOUT Synexis the company — revenue, leadership, history,
   acquisitions, employee info. Those are on_topic even when we can't answer
@@ -89,6 +90,11 @@ Classify the incoming query into exactly one category:
   on_topic. Size, weight, specs, coverage, mounting, installation questions
   about any of these devices are on_topic regardless of how the product is
   named.
+  IMPORTANT: Sales strategy and business case questions are on_topic — ROI,
+  value proposition, cost justification, objection handling, how to pitch to
+  a specific role or industry. A rep asking "what are the ROI drivers for
+  equine vets?" is asking a Synexis sales question, not a general finance
+  question.
   IMPORTANT: Synexis sales training resources are on_topic. "Module 1A",
   "Module 1B", "Module 1C", "Module 1D", "Module 1E", "Module 1F" refer to
   Synexis internal training modules. Questions about what a module covers,
