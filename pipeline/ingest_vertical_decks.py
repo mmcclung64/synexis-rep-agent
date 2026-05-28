@@ -73,14 +73,17 @@ VERTICAL_DECKS = [
         "https://243636346.fs1.hubspotusercontent-na2.net/hubfs/243636346/Rep%20Agent%20Content/Intro%20to%20Synexis%20_Poultry_0526.pptx",
         (
             "Overview and introduction to Synexis DHP® technology for the Poultry vertical. "
-            "Covers the value proposition for hatcheries, broiler houses, egg coolers, egg "
-            "collection and packing areas, breeder houses, feed storage, and employee/common "
-            "spaces. Topics include: what Synexis technology does, how DHP® provides continuous "
-            "touchless pathogen control in occupied poultry production environments, efficacy "
-            "data for Salmonella, Campylobacter, and other poultry pathogens, flock health and "
-            "biosecurity framing, device lineup and placement guidance, and rep talking points "
-            "for Poultry prospect conversations. Use this deck as the primary shareable resource "
-            "for Poultry vertical introductions and overview conversations."
+            "Relevant for Poultry and Food Safety conversations — poultry production is a core "
+            "food safety context where pathogen control directly impacts product safety and "
+            "compliance. Covers the value proposition for hatcheries, broiler houses, egg "
+            "coolers, egg collection and packing areas, breeder houses, feed storage, and "
+            "employee/common spaces. Topics include: what Synexis technology does, how DHP® "
+            "provides continuous touchless pathogen control in occupied poultry production "
+            "environments, food safety efficacy data for Salmonella, Campylobacter, and other "
+            "poultry and food safety pathogens, flock health and biosecurity framing, food "
+            "safety compliance support, device lineup and placement guidance, and rep talking "
+            "points for Poultry and Food Safety prospect conversations. Use this deck alongside "
+            "the Food Processing deck for comprehensive Food Safety vertical coverage."
         ),
     ),
     (
