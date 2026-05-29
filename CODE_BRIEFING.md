@@ -668,6 +668,81 @@ Add `email_draft: true` to the query log record when email intent is detected. E
 
 ---
 
+### Technical Debt: Global exclude_path_keywords enforcement [FIXED May 29, 2026]
+
+**Problem:** `watched_folders.json` used per-folder `exclude_path_keywords` arrays, requiring every folder entry to independently list archive path conventions (e.g. `ZZ_Archive`). This pattern is leak-prone across sessions: the fix gets applied to whichever folder surface the bug, but the underlying convention isn't enforced globally — so the same class of bug recurs when a new folder is added or when a ZZ_Archive subfolder appears somewhere that wasn't on the radar.
+
+**Manifestation:** Four archived HC one-pagers (`HC_OR`, `HC_Pharmacy`, `HC_LTC`, `HC_Patient`, all dated 2024) were ingested as Tier 2 from MAC because MAC's `exclude_path_keywords` lacked `ZZ_Archive`. These files had been physically moved to `MAC/Healthcare/Healthcare One Pagers/ZZ_Archive` in SharePoint on July 8, 2025 but were never purged from Pinecone. They surfaced in UAT with HubSpot share links pointing to real (but outdated) files.
+
+**Fix applied:**
+- Added top-level `global_exclude_path_keywords.keywords` to `watched_folders.json` — a single authoritative list that applies to every folder regardless of per-folder config
+- Patched `should_exclude()` in `sharepoint_sync.py` to check global keywords first, before per-folder keywords, on every ingest and delta event
+- Threaded `global_config` through `full_ingest()`, `sync_delta()`, and `_process_delta_item()` so the global config is always available at the exclusion check
+- Purged the 12 stale Pinecone chunks by `sp_item_id`
+- Added `ZZ_Archive` variants to every per-folder `exclude_path_keywords` as belt-and-suspenders (commit d66ff64f)
+- Global enforcement commit: pushed May 29, 2026
+
+**Lesson for future folder additions:** Any new watched folder automatically inherits global exclusions — no per-folder boilerplate needed. The `global_exclude_path_keywords` block is the single place to add new SP archive conventions.
+
+---
+
+### Technical Debt: Pinecone ↔ SharePoint Reconciliation Job [PLANNED]
+
+**Problem:** Adversarial tier-enforcement testing validates that Tier 3 suppression works correctly — but it cannot catch tier *assignment* errors. If a file is incorrectly tagged Tier 2 in Pinecone (e.g., because it was moved to ZZ_Archive after ingest), the enforcement layer sees a legitimate Tier 2 chunk and surfaces it. The two failure modes are orthogonal:
+
+- **Enforcement failures** (Tier 3 leaking as Tier 2) → caught by adversarial tests ✅
+- **Assignment drift** (a chunk's tier no longer matches its current SP location) → not currently detectable ❌
+
+System prompt Rule 200 ("always offer shareable docs") amplifies assignment errors specifically for Tier 2 content: an incorrectly-tiered chunk isn't quietly used as background context — it's actively presented to the rep as something to share with a prospect.
+
+**What's needed:** A periodic reconciliation job that cross-references every Tier 2 chunk's `sp_item_id` against the Graph API to verify the file still exists at a non-excluded, non-archived path. Any chunk whose file has been moved to ZZ_Archive, deleted, or moved to a Tier 3 folder is flagged for purge and optionally re-ingested at the correct tier.
+
+**Proposed implementation:**
+- New pipeline command: `python -m pipeline.sharepoint_sync --reconcile [--tier 2]`
+- For each chunk in Pinecone with `tier=2` (paginated via metadata filter + dummy vector query), fetch `GET /drives/{drive_id}/items/{sp_item_id}` from Graph
+- If 404 → file deleted → `forget_file()`
+- If found but `parentReference.path` matches a global or per-folder exclude keyword → file archived → `forget_file()`
+- If found and path is clean → no action
+- Emit a summary report: N verified clean, N purged (deleted), N purged (archived), N errors
+- Run cadence: weekly (add to orchestrator or as a separate scheduled Cowork task)
+- Cost: Graph API calls only (no embedding, no Pinecone writes unless purging) — cheap
+
+**Why this is distinct from the delta sync:** Delta sync catches changes that happen *after* a delta token is seeded. It does not retroactively audit chunks ingested before the token was established, and it misses moves that occurred during any gap in webhook coverage.
+
+---
+
+### v2 Architecture Refactor — Full Rebuild [STRATEGIC — post-Partner-Beta]
+
+**Context:** All work to date — RAG pipeline, Chrome extension, SharePoint sync, outbreak watcher, monitoring, UAT — constitutes a high-fidelity proof of concept. It has validated core assumptions, surfaced real UX patterns (streaming, citation accordion, email card, partner vertical picker), driven content governance decisions (four-tier model, ZZ_Archive convention, surface_citations flag), and produced a working Partner Beta candidate. That is exactly what a PoC/UXD/UAT cycle is for.
+
+**The case for a clean rebuild:**
+- The codebase grew organically across 20+ sessions. Architectural decisions made in session 3 (e.g., flat `watched_folders.json`, single-file `sharepoint_sync.py` at 1,200+ lines, manual metadata threading) were right for speed-to-PoC but are accumulating friction.
+- Tier assignment integrity (see reconciliation job above) is a symptom of a deeper pattern: data quality enforcement is scattered across config keys, pipeline flags, and per-folder boilerplate rather than enforced at a schema layer.
+- The extension, backend, and pipeline are loosely coupled by convention rather than contract — no shared type definitions, no API versioning, no formal event schema for the delta/notification pipeline.
+- Multi-tenancy (currently: env var partner key → vertical string) will need a proper data model if Synexis scales beyond 2–3 partners.
+
+**What the PoC validated (inputs for v2 spec):**
+- Four-tier content model is correct and well-understood by stakeholders
+- Hybrid dense + sparse retrieval (Voyage + BM25) performs well for this corpus size
+- Streaming NDJSON is the right transport for the extension
+- Citation accordion + shareable doc rule is the right UX pattern for rep enablement
+- SharePoint as source of truth with Graph webhooks is the right sync architecture
+- Email drafting, vertical picker, partner key auth are the right feature set for Partner Beta
+- FastAPI on Render Starter is appropriate until volume justifies upgrade
+- The content governance workflow (MAC → Tier 2, HA → Tier 3, ZZ_Archive → exclude) is validated by UAT
+
+**Suggested v2 principles:**
+- Schema-first: define Pinecone metadata schema as a Pydantic model; all ingest paths validate against it
+- Explicit tier assignment audit trail: every chunk records `ingested_at`, `sp_path_at_ingest`, `tier_source` (folder config / override / manual)
+- Split `sharepoint_sync.py` into focused modules: `graph_client.py`, `ingest.py`, `delta.py`, `reconcile.py`
+- Typed API contract between extension and backend (OpenAPI spec)
+- Proper multi-tenant data model: partner → verticals → content scope → key rotation
+- Reconciliation as a first-class pipeline primitive, not an afterthought
+
+**Timing:** Do not start v2 during Partner Beta — stability matters more than architecture right now. Revisit after 60 days of Partner Beta data and at least one full content governance cycle with Jimmy/Nick.
+
+---
+
 ### Nightly trade press sweep [DEFERRED — post-Beta]
 Add a nightly scheduled task that searches a defined list of trade publications (*Infection Prevention Today*, *APIC*, *Food Safety News*, etc.) for articles matching relevant keywords (DHP, dry hydrogen peroxide, infection prevention, HAI, food safety, bioburden, etc.). Fetches full text of any hits, drops them into `source_content/` with status `pending-governance`, and sends a notification (email or Slack) summarizing what was found. Governance review (Nick / Richelle / Jimmy) approves items before they're ingested into the corpus. Requires a news/web search API — Google News API, NewsAPI.org, or Exa are candidate options. Fits cleanly into the existing drop-folder pipeline architecture. No web access added to the agent itself — sweep is a separate upstream process.
 
