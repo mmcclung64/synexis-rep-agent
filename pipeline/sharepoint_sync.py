@@ -247,9 +247,15 @@ def sync_watched_files_delta(drive_alias: str | None = None) -> None:
             log.info("Watched-files delta complete for drive %s — %d items processed.", alias, processed)
 
 
-def should_exclude(filename: str, folder_config: dict, parent_path: str = "") -> bool:
+def should_exclude(filename: str, folder_config: dict, parent_path: str = "",
+                   global_config: dict | None = None) -> bool:
     """Return True if this filename matches any exclude_pattern, or if any
-    exclude_path_keyword appears in the item's SharePoint parent folder path.
+    exclude_path_keyword (per-folder or global) appears in the item's SharePoint
+    parent folder path.
+
+    global_config, if provided, is the top-level watched_folders.json dict.
+    Global keywords in global_config["global_exclude_path_keywords"]["keywords"]
+    are checked first and apply to every folder regardless of per-folder config.
     parent_path should be the parentReference.path value from the Graph API item.
     """
     for pat in folder_config.get("exclude_patterns", []):
@@ -257,6 +263,13 @@ def should_exclude(filename: str, folder_config: dict, parent_path: str = "") ->
             return True
     if parent_path:
         parent_lower = parent_path.lower()
+        # Global safeguards — apply to every folder regardless of per-folder config
+        if global_config:
+            for kw in global_config.get("global_exclude_path_keywords", {}).get("keywords", []):
+                if kw.lower() in parent_lower:
+                    log.debug("Global exclude matched '%s' in path: %s", kw, parent_path)
+                    return True
+        # Per-folder keywords
         for kw in folder_config.get("exclude_path_keywords", []):
             if kw.lower() in parent_lower:
                 return True
@@ -507,7 +520,8 @@ def sync_delta(folder_name: str | None = None) -> None:
     link for future incremental syncs — no files are processed on first run
     (prevents re-ingesting everything on startup).
     """
-    folders = get_watched_folders()
+    global_config = load_config()
+    folders = get_watched_folders(global_config)
     delta_tokens = _load_delta_tokens()
 
     for folder in folders:
@@ -536,7 +550,7 @@ def sync_delta(folder_name: str | None = None) -> None:
 
             if not first_run:
                 for item in items:
-                    _process_delta_item(item, folder, drive_id)
+                    _process_delta_item(item, folder, drive_id, global_config=global_config)
                     changes_processed += 1
 
             next_link = data.get("@odata.nextLink")
@@ -567,7 +581,8 @@ def full_ingest(folder_name: str | None = None) -> None:
 
     This is the right command after a Pinecone wipe or a first-time setup.
     """
-    folders = get_watched_folders()
+    global_config = load_config()
+    folders = get_watched_folders(global_config)
     delta_tokens = _load_delta_tokens()
 
     for folder in folders:
@@ -597,7 +612,7 @@ def full_ingest(folder_name: str | None = None) -> None:
                     log.debug("Full ingest: skipping %s (unsupported extension)", name)
                     continue
                 parent_path = item.get("parentReference", {}).get("path", "")
-                if should_exclude(name, folder, parent_path):
+                if should_exclude(name, folder, parent_path, global_config=global_config):
                     log.info("Full ingest: skipping excluded file %s (parent: %s)", name, parent_path)
                     skipped += 1
                     continue
@@ -636,7 +651,8 @@ def full_ingest(folder_name: str | None = None) -> None:
         )
 
 
-def _process_delta_item(item: dict, folder: dict, drive_id: str) -> None:
+def _process_delta_item(item: dict, folder: dict, drive_id: str,
+                        global_config: dict | None = None) -> None:
     """Process a single delta item (created, modified, or deleted)."""
     item_id = item.get("id")
     name = item.get("name", "")
@@ -651,7 +667,7 @@ def _process_delta_item(item: dict, folder: dict, drive_id: str) -> None:
         forget_file(sp_item_id=item_id, source_path=f"sharepoint:{item_id}")
     else:
         parent_path = item.get("parentReference", {}).get("path", "")
-        if should_exclude(name, folder, parent_path):
+        if should_exclude(name, folder, parent_path, global_config=global_config):
             log.info("Delta: skipping excluded file %s (parent: %s)", name, parent_path)
             return
         ext = Path(name).suffix.lstrip(".").lower()

@@ -1,6 +1,17 @@
 {
   "_comment": "Golden copy folder config for SharePoint sync pipeline. Each entry is one watched folder. 'tier' is the default for all files in that folder unless overridden by content_type_overrides. Tiers: 1=cite+link, 2=shareable, 3=background-only. 'exclude_patterns' are filename glob patterns — matching files are skipped entirely (not ingested). Update item_id and drive_id values when Product Management and Sales folder IDs are confirmed.",
 
+  "global_exclude_path_keywords": {
+    "_comment": "Path fragments that block ingest from ANY watched folder, regardless of per-folder config. SharePoint convention: ZZ_ prefix = archived/do-not-use. Add new patterns here — sharepoint_sync.py enforces this globally in should_exclude().",
+    "keywords": [
+      "ZZ_Archive",
+      "ZZ_Do_Not_Use",
+      "ZZ Archive",
+      "ZZ Do Not Use",
+      "Do Not Use"
+    ]
+  },
+
   "drive_ids": {
     "MarketingSite": "b!sALhEjO5wkOXIGt9l_1x1R-hWqA7Hq5Jlbdb6nVGVe4C-DoVCdi6RYqg39lO8pZc",
     "SalesTeamFiles": "b!Ui736gtBNEGImDNsdasfI5sTKoObYVJLmtRWt35UE2kamsQrtqPUQ5P_h1O6oQuO",
