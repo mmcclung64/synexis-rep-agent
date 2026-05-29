@@ -57,6 +57,13 @@
         { "title": "Synexis Module 1F - DHP, Safe for Occupied Spaces","vimeo_id": "1185871358", "url": "https://vimeo.com/1185871358" }
       ],
       "exclude_patterns": [],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_types": [
         "Training Video Scripts"
       ],
@@ -74,6 +81,13 @@
       "surface_citations": false,
       "_comment": "Scoped to the '2025 Brand Message Guidelines' subfolder only — NOT the Brand Assets and Regulations root. Brand guidelines shape agent tone/rails but are never cited or surfaced to reps. Tier 3 = background only. Root folder (Brand Assets) intentionally excluded — logos, business cards, templates, etc. are not part of the corpus.",
       "exclude_patterns": [],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_types": [
         "Brand Message Guidelines"
       ]
@@ -96,7 +110,12 @@
       ],
       "exclude_path_keywords": [
         "Historically Approved",
-        "Scripts From Training"
+        "Scripts From Training",
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
       ],
       "content_type_overrides": {
         "Customer Facing Master Deck": {
@@ -171,6 +190,13 @@
       "surface_citations": false,
       "_comment": "PLACEHOLDER — item_id and drive_id pending Michael's confirmation. Mix of Tier 1 (Regulatory Opinions) and Tier 3 (everything else). Tier overrides applied per content type.",
       "exclude_patterns": [],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_type_overrides": {
         "Regulatory Opinions": {
           "tier": 1,
@@ -198,6 +224,13 @@
       "ingest": true,
       "surface_citations": false,
       "exclude_patterns": [],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_types": [
         "Competitor Training",
         "Competitor Analysis",
@@ -217,6 +250,13 @@
       "ingest": true,
       "surface_citations": false,
       "exclude_patterns": [],
+      "exclude_path_keywords": [
+        "ZZ_Archive",
+        "ZZ_Do_Not_Use",
+        "ZZ Archive",
+        "ZZ Do Not Use",
+        "Do Not Use"
+      ],
       "content_types": [
         "Vertical Playbooks",
         "Webinar Transcripts"
