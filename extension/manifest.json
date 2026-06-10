@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Synexis Rep Agent",
-  "version": "0.2.2",
-  "description": "Knowledge-grounded Q&A for Synexis sales reps, powered by the Synexis Rep Agent API.",
+  "name": "Lenexa, the Synexis AI Agent",
+  "version": "0.2.3",
+  "description": "Knowledge-grounded Q&A for Synexis sales reps, powered by Lenexa, the Synexis AI Agent.",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
   },
   "action": {
-    "default_title": "Open Synexis Rep Agent",
+    "default_title": "Open Lenexa",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",
